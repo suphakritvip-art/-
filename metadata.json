@@ -1,0 +1,6 @@
+{
+  "name": "ระบบจัดการและยืม-คืนหนังสืออัจฉริยะ",
+  "description": "ระบบจัดการและตรวจสอบข้อมูลหนังสืออัจฉริยะ ตรวจสอบจำนวนหนังสือเข้าและแจกออกอย่างละเอียด เชื่อมโยง Google Sheet พร้อมสิทธิ์ผู้ใช้ Admin, ครู และนักเรียน",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
