@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Book, BookTransaction, Student } from '../types';
 import AnalyticsReport from './AnalyticsReport';
 import TextbookDistribution from './TextbookDistribution';
+import { StudentDetailModal } from './StudentDetailModal';
 import { 
   Plus, Trash2, Edit2, Users, FileSpreadsheet, Check, X,
   RefreshCw, LogOut, Loader2, Sparkles, AlertCircle, CheckCircle2,
   FileDown, PlusCircle, HelpCircle, BookOpen, Search, Filter, 
-  ChevronRight, HeartHandshake, Undo2, Ban, Import, Trash, Eye, ChevronDown
+  ChevronRight, HeartHandshake, Undo2, Ban, Import, Trash, Eye, ChevronDown, User
 } from 'lucide-react';
 
 interface TeacherDashboardProps {
@@ -142,6 +143,10 @@ export default function TeacherDashboard({
   const [books, setBooks] = useState<Book[]>([]);
   const [transactions, setTransactions] = useState<BookTransaction[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
+
+  // Student detail modal state
+  const [selectedStudentForModal, setSelectedStudentForModal] = useState<Student | null>(null);
+  const [isStudentModalOpen, setIsStudentModalOpen] = useState(false);
   
   // Loading states
   const [loadingBooks, setLoadingBooks] = useState(false);
@@ -1643,12 +1648,13 @@ export default function TeacherDashboard({
                   <th className="p-3">แผนกวิชา / สาขา</th>
                   <th className="p-3">สถานะการยืม / รายละเอียด</th>
                   <th className="p-3 text-center">สถานะเปิดบัญชี</th>
+                  <th className="p-3 text-right">ดำเนินการ</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                 {loadingStudents && students.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-400">
+                    <td colSpan={8} className="p-8 text-center text-slate-400">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-teal-600 mb-2" />
                       กำลังดึงข้อมูลรายชื่อ...
                     </td>
@@ -1721,6 +1727,20 @@ export default function TeacherDashboard({
                             </span>
                           )}
                         </td>
+                        <td className="p-3 text-right">
+                          <button
+                            id={`btn-teacher-view-student-${std.id}`}
+                            onClick={() => {
+                              setSelectedStudentForModal(std);
+                              setIsStudentModalOpen(true);
+                            }}
+                            className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg cursor-pointer text-[11px] font-bold flex items-center gap-1 transition-all ml-auto"
+                            title="ดูข้อมูลส่วนตัวและเปลี่ยนรหัสผ่านให้นักเรียน"
+                          >
+                            <User className="w-3.5 h-3.5" />
+                            <span>ดูข้อมูล/แก้รหัสผ่าน</span>
+                          </button>
+                        </td>
                       </tr>
                     );
                   })
@@ -1735,7 +1755,7 @@ export default function TeacherDashboard({
                   );
                 }).length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-400 italic">
+                    <td colSpan={8} className="p-8 text-center text-slate-400 italic">
                       ไม่พบข้อมูลรหัสนักศึกษา หรือชื่อนักเรียนที่ค้นหาในระบบ
                     </td>
                   </tr>
@@ -1903,6 +1923,16 @@ export default function TeacherDashboard({
           </div>
         </div>
       )}
+
+      {/* Student Detail & Password Edit Modal */}
+      <StudentDetailModal
+        student={selectedStudentForModal}
+        isOpen={isStudentModalOpen}
+        onClose={() => setIsStudentModalOpen(false)}
+        onUpdateSuccess={fetchStudents}
+        transactions={transactions}
+        books={books}
+      />
 
     </div>
   );

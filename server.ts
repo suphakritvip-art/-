@@ -238,10 +238,11 @@ app.post('/api/auth/login', (req, res) => {
   // Admin Role Check
   if (role === 'admin') {
     const cleanUser = username.trim().toLowerCase();
-    if (cleanUser === 'admin' && (password === 'admin' || password === 'ADMIN' || password === '44120')) {
+    const isPasswordValid = password === '254812';
+    if (cleanUser === 'admin' && isPasswordValid) {
       return res.json({
         success: true,
-        user: { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)' },
+        user: { id: 'admin', username: 'Admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)' },
         role: 'admin'
       });
     } else {
@@ -399,7 +400,7 @@ app.get('/api/students/:id/profile', (req, res) => {
 // Student Profile Updates
 app.put('/api/students/:id/profile', (req, res) => {
   const { id } = req.params;
-  const { name, department, weight, height, bloodGroup, birthdate, religion, age, nickname, email } = req.body;
+  const { name, department, weight, height, bloodGroup, birthdate, religion, age, nickname, email, password } = req.body;
 
   const db = readDB();
   const index = db.students.findIndex(s => s.id === id);
@@ -418,9 +419,30 @@ app.put('/api/students/:id/profile', (req, res) => {
   if (age !== undefined) student.age = age;
   if (nickname !== undefined) student.nickname = nickname;
   if (email !== undefined) student.email = email;
+  if (password !== undefined && password !== '') student.password = password;
 
   writeDB(db);
   res.json({ success: true, message: 'อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว', student });
+});
+
+// Student Password Update Route for Admin/Teacher
+app.put('/api/students/:id/password', (req, res) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+
+  if (!newPassword || newPassword.trim() === '') {
+    return res.status(400).json({ success: false, message: 'กรุณาระบุรหัสผ่านใหม่' });
+  }
+
+  const db = readDB();
+  const student = db.students.find(s => s.id === id);
+  if (!student) {
+    return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลนักเรียน' });
+  }
+
+  student.password = newPassword.trim();
+  writeDB(db);
+  res.json({ success: true, message: `เปลี่ยนรหัสผ่านของนักเรียน ${student.name} เรียบร้อยแล้ว`, student });
 });
 
 // Teacher Profile Fetch
@@ -1446,7 +1468,8 @@ app.get('/api/stats', (req, res) => {
 // 8. Admin DB Reset
 app.post('/api/admin/reset-db', (req, res) => {
   const { confirmCode } = req.body;
-  if (confirmCode !== 'RESET-44120') {
+  const isValidCode = confirmCode === '12102548' || confirmCode === 'RESET-12102548';
+  if (!isValidCode) {
     return res.status(400).json({ success: false, message: 'รหัสยืนยันไม่ถูกต้อง' });
   }
 

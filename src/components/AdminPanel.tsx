@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Student, Teacher, Book, BookTransaction } from '../types';
 import AnalyticsReport from './AnalyticsReport';
 import TextbookDistribution from './TextbookDistribution';
+import { StudentDetailModal } from './StudentDetailModal';
 import { 
   ShieldAlert, Users, School, BookOpen, Trash2, Key, CheckCircle2, 
   AlertCircle, Loader2, LogOut, RefreshCw, RefreshCw as ResetIcon, Plus,
   Database, Info, AlertTriangle, FileSpreadsheet, Check, X, Sparkles, BookMarked,
-  Search, HeartHandshake, Undo2, ChevronDown, ExternalLink
+  Search, HeartHandshake, Undo2, ChevronDown, ExternalLink, User
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -145,6 +146,10 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
   const [students, setStudents] = useState<Student[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
   const [transactions, setTransactions] = useState<BookTransaction[]>([]);
+
+  // Modal for student profile & password management
+  const [selectedStudentForModal, setSelectedStudentForModal] = useState<Student | null>(null);
+  const [isStudentModalOpen, setIsStudentModalOpen] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -674,7 +679,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
   // Database hard reset
   const handleResetDBSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (resetCode !== '44120') {
+    if (resetCode !== '12102548') {
       showAlert('error', 'รหัสยืนยันไม่ถูกต้อง');
       return;
     }
@@ -684,7 +689,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
       const res = await fetch('/api/admin/reset-db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmCode: 'RESET-44120' })
+        body: JSON.stringify({ confirmCode: resetCode })
       });
       const data = await res.json();
 
@@ -1416,14 +1421,29 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                             )}
                           </td>
                           <td className="p-3 text-right">
-                            <button
-                              id={`btn-delete-student-${s.id}`}
-                              onClick={() => handleDeleteStudent(s.id)}
-                              disabled={actionLoading === s.id}
-                              className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                id={`btn-view-student-${s.id}`}
+                                onClick={() => {
+                                  setSelectedStudentForModal(s);
+                                  setIsStudentModalOpen(true);
+                                }}
+                                className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg cursor-pointer text-[11px] font-bold flex items-center gap-1 transition-all"
+                                title="ดูข้อมูลส่วนตัวและเปลี่ยนรหัสผ่าน"
+                              >
+                                <User className="w-3.5 h-3.5" />
+                                <span>ดูข้อมูล/แก้รหัสผ่าน</span>
+                              </button>
+                              <button
+                                id={`btn-delete-student-${s.id}`}
+                                onClick={() => handleDeleteStudent(s.id)}
+                                disabled={actionLoading === s.id}
+                                className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg cursor-pointer transition-all"
+                                title="ลบข้อมูลนักเรียน"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2255,14 +2275,14 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
               <form onSubmit={handleResetDBSubmit} className="space-y-3 p-4 bg-red-50/50 border border-red-100 rounded-xl fade-in text-xs">
                 <div>
                   <p className="font-bold text-red-900">ระบุรหัสความปลอดภัยผู้ใช้เพื่อยืนยัน:</p>
-                  <p className="text-[10px] text-red-600 mt-0.5">ระบุรหัสประจำตัวพินความปลอดภัยแอดมิน: <strong className="bg-white px-1.5 py-0.5 border rounded font-mono font-black text-rose-800">44120</strong></p>
+                  <p className="text-[10px] text-red-600 mt-0.5">ระบุรหัสประจำตัวพินความปลอดภัยแอดมิน: <strong className="bg-white px-1.5 py-0.5 border rounded font-mono font-black text-rose-800">12102548</strong></p>
                 </div>
 
                 <input
                   id="admin-reset-code-input"
                   type="text"
                   required
-                  placeholder="พิมพ์ 44120"
+                  placeholder="พิมพ์ 12102548"
                   value={resetCode}
                   onChange={(e) => setResetCode(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-red-200 rounded-xl font-bold font-mono text-center text-sm"
@@ -2306,6 +2326,16 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
       )}
 
       </div>
+
+      {/* Student Detail & Password Edit Modal */}
+      <StudentDetailModal
+        student={selectedStudentForModal}
+        isOpen={isStudentModalOpen}
+        onClose={() => setIsStudentModalOpen(false)}
+        onUpdateSuccess={loadAllData}
+        transactions={transactions}
+        books={books}
+      />
     </div>
   );
 }
