@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 import { Student, Teacher, Book, BookTransaction, SystemStats } from './src/types';
 
 const app = express();
@@ -10,6 +9,19 @@ const DB_FILE = path.join(process.cwd(), 'database.json');
 const TMP_DB_FILE = path.join('/tmp', 'database.json');
 
 app.use(express.json());
+
+// CORS for Vercel / Cloud Run
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  next();
+});
 
 // --- Helper for Database ---
 interface DatabaseSchema {
@@ -1446,6 +1458,7 @@ app.post('/api/admin/reset-db', (req, res) => {
 // --- Vite/Static Serving Setup ---
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
