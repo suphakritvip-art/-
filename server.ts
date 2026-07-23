@@ -1408,6 +1408,141 @@ app.post('/api/sheets/preview', async (req, res) => {
   }
 });
 
+// Fetch Google Sheet Data via Apps Script Web App URL
+app.post('/api/apps-script/fetch', async (req, res) => {
+  const { appsScriptUrl } = req.body;
+  if (!appsScriptUrl) {
+    return res.status(400).json({ success: false, message: 'กรุณากรอก URL ของ Google Apps Script Web App' });
+  }
+
+  try {
+    const cleanUrl = appsScriptUrl.trim();
+    let response = await fetch(cleanUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      redirect: 'follow'
+    });
+
+    if (!response.ok) {
+      response = await fetch(cleanUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'read' }),
+        redirect: 'follow'
+      });
+    }
+
+    if (!response.ok) {
+      return res.status(400).json({
+        success: false,
+        message: `เกิดข้อผิดพลาดในการเชื่อมต่อ Google Apps Script (HTTP ${response.status})`
+      });
+    }
+
+    const text = await response.text();
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google Apps Script ไม่ได้ส่งคืนข้อมูล JSON ที่ถูกต้อง กรุณาตรวจสอบการตั้งค่า Deploy as Web App -> Anyone (ทุกคน)'
+      });
+    }
+
+    let headers: string[] = [];
+    let rows: string[][] = [];
+
+    if (Array.isArray(json)) {
+      if (json.length > 0) {
+        if (Array.isArray(json[0])) {
+          headers = json[0].map((h: any) => String(h || ''));
+          rows = json.slice(1).map((r: any) => Array.isArray(r) ? r.map((c: any) => String(c ?? '')) : [String(r)]);
+        } else if (typeof json[0] === 'object') {
+          headers = Object.keys(json[0]);
+          rows = json.map((obj: any) => headers.map(h => String(obj[h] ?? '')));
+        }
+      }
+    } else if (json && typeof json === 'object') {
+      if (Array.isArray(json.data)) {
+        if (Array.isArray(json.data[0])) {
+          headers = json.data[0].map((h: any) => String(h || ''));
+          rows = json.data.slice(1).map((r: any) => Array.isArray(r) ? r.map((c: any) => String(c ?? '')) : [String(r)]);
+        } else if (typeof json.data[0] === 'object') {
+          headers = Object.keys(json.data[0]);
+          rows = json.data.map((obj: any) => headers.map(h => String(obj[h] ?? '')));
+        }
+      } else if (Array.isArray(json.headers) && Array.isArray(json.rows)) {
+        headers = json.headers.map((h: any) => String(h || ''));
+        rows = json.rows.map((r: any) => Array.isArray(r) ? r.map((c: any) => String(c ?? '')) : [String(r)]);
+      }
+    }
+
+    return res.json({
+      success: true,
+      headers,
+      rows,
+      totalRows: rows.length,
+      fetchedAt: new Date().toISOString(),
+      rawResponse: json
+    });
+  } catch (error: any) {
+    console.error('Error fetching from Apps Script:', error);
+    return res.status(500).json({
+      success: false,
+      message: `ไม่สามารถดึงข้อมูลผ่าน Apps Script ได้: ${error.message}`
+    });
+  }
+});
+
+// Update Google Sheet Data via Apps Script Web App URL
+app.post('/api/apps-script/update', async (req, res) => {
+  const { appsScriptUrl, action, rowIndex, colIndex, value, rowData, headers, rows } = req.body;
+  if (!appsScriptUrl) {
+    return res.status(400).json({ success: false, message: 'กรุณากรอก URL ของ Google Apps Script Web App' });
+  }
+
+  try {
+    const cleanUrl = appsScriptUrl.trim();
+    const payload = {
+      action: action || 'writeAll',
+      rowIndex,
+      colIndex,
+      value,
+      rowData,
+      headers,
+      rows
+    };
+
+    const response = await fetch(cleanUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      redirect: 'follow'
+    });
+
+    const text = await response.text();
+    let json: any = {};
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      json = { success: true, message: 'ส่งคำสั่งไปยัง Apps Script เรียบร้อยแล้ว', rawText: text };
+    }
+
+    return res.json({
+      success: json.success !== false,
+      message: json.message || 'อัปเดตข้อมูลบน Google Sheet ผ่าน Apps Script สำเร็จ!',
+      data: json
+    });
+  } catch (error: any) {
+    console.error('Error updating via Apps Script:', error);
+    return res.status(500).json({
+      success: false,
+      message: `ไม่สามารถอัปเดตข้อมูลผ่าน Apps Script ได้: ${error.message}`
+    });
+  }
+});
+
 // 5. Transactions (Borrowing, Distributions, Returns) API
 app.get('/api/transactions', (req, res) => {
   const { userId } = req.query;

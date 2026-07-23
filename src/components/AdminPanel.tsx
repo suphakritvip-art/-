@@ -8,8 +8,79 @@ import {
   ShieldAlert, Users, School, BookOpen, Trash2, Key, CheckCircle2, 
   AlertCircle, Loader2, LogOut, RefreshCw, RefreshCw as ResetIcon, Plus,
   Database, Info, AlertTriangle, FileSpreadsheet, Check, X, Sparkles, BookMarked,
-  Search, HeartHandshake, Undo2, ChevronDown, ExternalLink, User
+  Search, HeartHandshake, Undo2, ChevronDown, ExternalLink, User,
+  Code, Send, Save, Copy
 } from 'lucide-react';
+
+const APPS_SCRIPT_CODE_TEMPLATE = `// ==========================================
+// 🚀 Google Apps Script Web App Code 
+// (นำโค้ดนี้ไปวางใน Google Sheet -> ส่วนขยาย (Extensions) -> Apps Script)
+// ==========================================
+
+function doGet(e) {
+  return handleRead(e);
+}
+
+function doPost(e) {
+  try {
+    var contents = e.postData ? e.postData.contents : null;
+    var req = contents ? JSON.parse(contents) : {};
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var action = req.action || 'read';
+
+    if (action === 'read') {
+      return handleRead(e);
+    }
+
+    if (action === 'writeAll') {
+      sheet.clearContents();
+      var allData = [];
+      if (req.headers && req.headers.length > 0) {
+        allData.push(req.headers);
+      }
+      if (req.rows && req.rows.length > 0) {
+        allData = allData.concat(req.rows);
+      }
+      if (allData.length > 0 && allData[0].length > 0) {
+        sheet.getRange(1, 1, allData.length, allData[0].length).setValues(allData);
+      }
+      return jsonResponse({ success: true, message: 'บันทึกข้อมูลลง Google Sheet สำเร็จ!' });
+    }
+
+    if (action === 'updateCell') {
+      var r = Number(req.rowIndex) + 2;
+      var c = Number(req.colIndex) + 1;
+      sheet.getRange(r, c).setValue(req.value);
+      return jsonResponse({ success: true, message: 'อัปเดตเซลล์สำเร็จ' });
+    }
+
+    if (action === 'addRow') {
+      sheet.appendRow(req.rowData);
+      return jsonResponse({ success: true, message: 'เพิ่มแถวใหม่สำเร็จ' });
+    }
+
+    return jsonResponse({ success: false, message: 'ไม่พบ action ที่ระบุ' });
+  } catch (err) {
+    return jsonResponse({ success: false, message: 'Error: ' + err.toString() });
+  }
+}
+
+function handleRead(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = sheet.getDataRange().getValues();
+  if (!data || data.length === 0) {
+    return jsonResponse({ success: true, headers: [], rows: [] });
+  }
+  var headers = data[0];
+  var rows = data.slice(1);
+  return jsonResponse({ success: true, headers: headers, rows: rows, totalRows: rows.length });
+}
+
+function jsonResponse(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+
 
 interface AdminPanelProps {
   adminUser: { username: string; name: string };
@@ -198,6 +269,17 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
   const [liveSheetMode, setLiveSheetMode] = useState<'table' | 'embed'>('table');
   const [liveSheetSyncLoading, setLiveSheetSyncLoading] = useState<string | null>(null);
 
+  // Google Apps Script Live 2-Way Editing States
+  const [appsScriptUrl, setAppsScriptUrl] = useState('');
+  const [appsScriptLoading, setAppsScriptLoading] = useState(false);
+  const [appsScriptSaving, setAppsScriptSaving] = useState(false);
+  const [showAppsScriptModal, setShowAppsScriptModal] = useState(false);
+  const [isAppsScriptMode, setIsAppsScriptMode] = useState(false);
+  const [editableHeaders, setEditableHeaders] = useState<string[]>([]);
+  const [editableRows, setEditableRows] = useState<string[][]>([]);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+
   const fetchLiveSheetData = async (targetUrl?: string, targetGid?: string) => {
     const url = targetUrl !== undefined ? targetUrl : liveSheetUrl;
     if (!url) return;
@@ -211,6 +293,10 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
       const data = await res.json();
       if (data.success) {
         setLiveSheetData(data);
+        setEditableHeaders(data.headers || []);
+        setEditableRows(data.rows || []);
+        setHasUnsavedChanges(false);
+        setIsAppsScriptMode(false);
       } else {
         setAlert({ type: 'error', message: data.message || 'ไม่สามารถโหลดข้อมูล Google Sheet ได้' });
       }
@@ -219,6 +305,147 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
       setAlert({ type: 'error', message: 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Google Sheet' });
     } finally {
       setLiveSheetLoading(false);
+    }
+  };
+
+  const handleFetchAppsScript = async (urlToFetch?: string) => {
+    const url = urlToFetch || appsScriptUrl;
+    if (!url.trim()) {
+      setAlert({ type: 'error', message: 'กรุณากรอก URL ของ Google Apps Script Web App' });
+      return;
+    }
+    setAppsScriptLoading(true);
+    try {
+      const res = await fetch('/api/apps-script/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appsScriptUrl: url })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLiveSheetData({
+          headers: data.headers,
+          rows: data.rows,
+          fetchedAt: data.fetchedAt,
+          totalRows: data.totalRows,
+          spreadsheetId: 'Google Apps Script Web App',
+          embedUrl: url
+        });
+        setEditableHeaders(data.headers || []);
+        setEditableRows(data.rows || []);
+        setIsAppsScriptMode(true);
+        setHasUnsavedChanges(false);
+        setAlert({ type: 'success', message: `🚀 เชื่อมต่อ Google Apps Script สำเร็จ! โหลดข้อมูลเรียลไทม์เรียบร้อยแล้ว (${data.totalRows} แถว)` });
+      } else {
+        setAlert({ type: 'error', message: data.message });
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Google Apps Script' });
+    } finally {
+      setAppsScriptLoading(false);
+    }
+  };
+
+  const handleCellEdit = (rowIdx: number, colIdx: number, value: string) => {
+    const updatedRows = [...editableRows];
+    updatedRows[rowIdx] = [...(updatedRows[rowIdx] || [])];
+    updatedRows[rowIdx][colIdx] = value;
+    setEditableRows(updatedRows);
+    setHasUnsavedChanges(true);
+
+    if (liveSheetData) {
+      setLiveSheetData({
+        ...liveSheetData,
+        rows: updatedRows
+      });
+    }
+  };
+
+  const handleHeaderEdit = (colIdx: number, value: string) => {
+    const updatedHeaders = [...editableHeaders];
+    updatedHeaders[colIdx] = value;
+    setEditableHeaders(updatedHeaders);
+    setHasUnsavedChanges(true);
+    if (liveSheetData) {
+      setLiveSheetData({
+        ...liveSheetData,
+        headers: updatedHeaders
+      });
+    }
+  };
+
+  const handleAddRow = () => {
+    const colsCount = editableHeaders.length || 5;
+    const newRow = new Array(colsCount).fill('');
+    const updatedRows = [...editableRows, newRow];
+    setEditableRows(updatedRows);
+    setHasUnsavedChanges(true);
+    if (liveSheetData) {
+      setLiveSheetData({
+        ...liveSheetData,
+        rows: updatedRows,
+        totalRows: updatedRows.length
+      });
+    }
+  };
+
+  const handleDeleteRow = (rowIdx: number) => {
+    const updatedRows = editableRows.filter((_, idx) => idx !== rowIdx);
+    setEditableRows(updatedRows);
+    setHasUnsavedChanges(true);
+    if (liveSheetData) {
+      setLiveSheetData({
+        ...liveSheetData,
+        rows: updatedRows,
+        totalRows: updatedRows.length
+      });
+    }
+  };
+
+  const handleAddColumn = () => {
+    const newColName = `Col ${editableHeaders.length + 1}`;
+    const updatedHeaders = [...editableHeaders, newColName];
+    const updatedRows = editableRows.map(r => [...r, '']);
+    setEditableHeaders(updatedHeaders);
+    setEditableRows(updatedRows);
+    setHasUnsavedChanges(true);
+    if (liveSheetData) {
+      setLiveSheetData({
+        ...liveSheetData,
+        headers: updatedHeaders,
+        rows: updatedRows
+      });
+    }
+  };
+
+  const handleSaveToGoogleSheet = async () => {
+    if (!appsScriptUrl.trim()) {
+      setAlert({ type: 'error', message: 'กรุณากรอก URL ของ Google Apps Script Web App ในช่อง Apps Script เพื่อบันทึกข้อมูลย้อนกลับไปยัง Google Sheet' });
+      return;
+    }
+    setAppsScriptSaving(true);
+    try {
+      const res = await fetch('/api/apps-script/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appsScriptUrl,
+          action: 'writeAll',
+          headers: editableHeaders,
+          rows: editableRows
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setHasUnsavedChanges(false);
+        setAlert({ type: 'success', message: '⚡ บันทึกการแก้ไขตรงไปยัง Google Sheets เรียบร้อยแล้วสดๆ!' });
+      } else {
+        setAlert({ type: 'error', message: data.message });
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: 'ไม่สามารถส่งข้อมูลไปยัง Google Apps Script ได้' });
+    } finally {
+      setAppsScriptSaving(false);
     }
   };
 
@@ -1984,7 +2211,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <label className="text-xs font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                     <Database className="w-4 h-4 text-emerald-400" />
-                    เลือกแหล่งข้อมูล Google Sheets หรือระบุลิงก์:
+                    1. เลือกชีตพรีเซ็ต หรือระบุลิงก์ Google Sheets (อ่านอย่างเดียว):
                   </label>
 
                   {/* Quick presets */}
@@ -2099,6 +2326,50 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                     ดึงข้อมูลสด
                   </button>
                 </form>
+
+                {/* Google Apps Script 2-Way Sync Connection Box */}
+                <div className="pt-3 border-t border-slate-800/80 space-y-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                    <label className="text-xs font-black text-rose-300 uppercase tracking-wide flex items-center gap-1.5">
+                      <Code className="w-4 h-4 text-rose-400" />
+                      2. ช่องเชื่อมต่อ Google Apps Script Web App (ดึงข้อมูล + แก้ไขสดแบบ 2-Way Sync):
+                    </label>
+
+                    <button
+                      type="button"
+                      id="btn-open-apps-script-modal"
+                      onClick={() => setShowAppsScriptModal(true)}
+                      className="text-xs font-bold text-sky-400 hover:text-sky-300 underline flex items-center gap-1 cursor-pointer transition-all"
+                    >
+                      <Code className="w-3.5 h-3.5" />
+                      วิธีติดตั้ง & ดูโค้ด Google Apps Script (ก๊อปปี้ไปวางได้เลย)
+                    </button>
+                  </div>
+
+                  <form onSubmit={(e) => { e.preventDefault(); handleFetchAppsScript(); }} className="flex flex-col sm:flex-row gap-2.5">
+                    <div className="relative flex-1">
+                      <Send className="w-4 h-4 text-rose-400 absolute left-3.5 top-3" />
+                      <input
+                        id="input-admin-apps-script-url"
+                        type="url"
+                        placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
+                        value={appsScriptUrl}
+                        onChange={(e) => setAppsScriptUrl(e.target.value)}
+                        className="w-full pl-10 pr-3 py-2.5 bg-slate-900 border border-slate-750 focus:border-rose-500 focus:outline-none rounded-xl text-xs text-rose-200 placeholder-slate-500 font-mono"
+                      />
+                    </div>
+
+                    <button
+                      id="btn-admin-apps-script-submit"
+                      type="submit"
+                      disabled={appsScriptLoading}
+                      className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl cursor-pointer transition-all shrink-0 flex items-center justify-center gap-1.5 shadow-md"
+                    >
+                      {appsScriptLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Code className="w-4 h-4" />}
+                      ดึงข้อมูลผ่าน Apps Script
+                    </button>
+                  </form>
+                </div>
               </div>
 
               {/* Live Status Stats & View Switcher */}
@@ -2109,7 +2380,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                       <p className="text-[10px] text-slate-400 font-bold uppercase">สถานะการเชื่อมต่อ</p>
                       <p className="text-xs sm:text-sm font-black text-emerald-400 flex items-center justify-center gap-1 mt-0.5">
                         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-                        เชื่อมต่อสดสำเร็จ
+                        {isAppsScriptMode ? 'Apps Script 2-Way Live' : 'เชื่อมต่อสดสำเร็จ'}
                       </p>
                     </div>
 
@@ -2123,14 +2394,14 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                     <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-center">
                       <p className="text-[10px] text-slate-400 font-bold uppercase">จำนวนแถวทั้งหมด</p>
                       <p className="text-xs sm:text-sm font-black text-rose-400 mt-0.5 font-mono">
-                        {liveSheetData.totalRows} แถว
+                        {editableRows.length} แถว
                       </p>
                     </div>
 
                     <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-center">
                       <p className="text-[10px] text-slate-400 font-bold uppercase">คอลัมน์ที่ตรวจพบ</p>
                       <p className="text-xs sm:text-sm font-black text-sky-400 mt-0.5 font-mono">
-                        {liveSheetData.headers.length} คอลัมน์
+                        {editableHeaders.length} คอลัมน์
                       </p>
                     </div>
                   </div>
@@ -2147,7 +2418,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                         }`}
                       >
                         <Database className="w-3.5 h-3.5" />
-                        ตารางข้อมูลสด ({liveSheetData.rows.length})
+                        ตารางข้อมูลสด ({editableRows.length})
                       </button>
 
                       <button
@@ -2212,58 +2483,111 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                     </div>
                   </div>
 
-                  {/* Content Mode 1: Table Grid View */}
+                  {/* Content Mode 1: Interactive Table Grid View with Live Editing */}
                   {liveSheetMode === 'table' && (
                     <div className="space-y-3">
-                      {/* Table Search Filter Bar */}
-                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                        <div className="relative w-full sm:w-80">
+                      {/* Table Controls & Apps Script Push Bar */}
+                      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 bg-slate-900/90 p-3 rounded-xl border border-slate-800">
+                        <div className="relative flex-1 max-w-xs">
                           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                           <input
                             id="input-admin-live-sheet-search"
                             type="text"
-                            placeholder="ค้นหาข้อความในแถวข้อมูลเรียลไทม์..."
+                            placeholder="ค้นหาข้อความในแถวข้อมูล..."
                             value={liveSheetFilter}
                             onChange={(e) => setLiveSheetFilter(e.target.value)}
                             className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
                           />
                         </div>
 
-                        <div className="text-xs text-slate-400 font-mono self-end sm:self-auto">
-                          แสดงผล {liveSheetData.rows.filter(r => r.some(cell => cell.toLowerCase().includes(liveSheetFilter.toLowerCase()))).length} / {liveSheetData.totalRows} แถว
+                        {/* Action buttons for editing */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleAddRow}
+                            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-1 cursor-pointer transition-all"
+                          >
+                            <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                            เพิ่มแถวใหม่
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleAddColumn}
+                            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 flex items-center gap-1 cursor-pointer transition-all"
+                          >
+                            <Plus className="w-3.5 h-3.5 text-sky-400" />
+                            เพิ่มคอลัมน์
+                          </button>
+
+                          <button
+                            type="button"
+                            id="btn-save-live-apps-script"
+                            onClick={handleSaveToGoogleSheet}
+                            disabled={appsScriptSaving}
+                            className={`px-4 py-1.5 text-xs font-extrabold rounded-lg flex items-center gap-1.5 shadow-md cursor-pointer transition-all ${
+                              hasUnsavedChanges
+                                ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 animate-pulse font-black'
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                            }`}
+                            title="ส่งการแก้ไขกลับไปยัง Google Sheet ผ่าน Apps Script"
+                          >
+                            {appsScriptSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                            <span>{hasUnsavedChanges ? '💾 มีการแก้ไข! บันทึกลง Google Sheet' : '💾 บันทึกลง Google Sheet'}</span>
+                          </button>
                         </div>
                       </div>
 
-                      {/* Table Scrollable Container */}
-                      <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px] shadow-inner bg-slate-950">
+                      {/* Interactive Editable Table Grid */}
+                      <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[520px] shadow-inner bg-slate-950">
                         <table className="w-full text-left text-xs border-collapse">
                           <thead className="sticky top-0 bg-slate-900 border-b border-slate-800 text-slate-300 font-bold z-10">
                             <tr>
-                              <th className="py-2.5 px-3 border-r border-slate-800 text-center w-12 text-slate-500">#</th>
-                              {liveSheetData.headers.map((h, idx) => (
-                                <th key={idx} className="py-2.5 px-3 border-r border-slate-800 whitespace-nowrap font-mono text-emerald-400">
-                                  {h || `Col ${idx + 1}`}
+                              <th className="py-2 px-2 border-r border-slate-800 text-center w-10 text-slate-500">#</th>
+                              {editableHeaders.map((header, colIdx) => (
+                                <th key={colIdx} className="p-1 border-r border-slate-800 font-mono text-emerald-400 min-w-[120px]">
+                                  <input
+                                    type="text"
+                                    value={header}
+                                    onChange={(e) => handleHeaderEdit(colIdx, e.target.value)}
+                                    className="w-full px-2 py-1 bg-transparent hover:bg-slate-800 focus:bg-slate-900 border border-transparent focus:border-emerald-500/50 rounded font-bold text-emerald-400 focus:outline-none"
+                                    placeholder={`Col ${colIdx + 1}`}
+                                  />
                                 </th>
                               ))}
+                              <th className="py-2 px-2 text-center w-12 text-slate-500">ลบ</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
-                            {liveSheetData.rows
-                              .filter(r => !liveSheetFilter || r.some(cell => cell.toLowerCase().includes(liveSheetFilter.toLowerCase())))
-                              .map((row, rowIdx) => (
-                                <tr key={rowIdx} className="hover:bg-slate-900/70 transition-colors">
-                                  <td className="py-2 px-3 border-r border-slate-800/60 text-center text-slate-500 font-bold text-[11px]">
-                                    {rowIdx + 1}
+                            {editableRows
+                              .map((row, realRowIdx) => ({ row, realRowIdx }))
+                              .filter(({ row }) => !liveSheetFilter || row.some(cell => String(cell || '').toLowerCase().includes(liveSheetFilter.toLowerCase())))
+                              .map(({ row, realRowIdx }) => (
+                                <tr key={realRowIdx} className="hover:bg-slate-900/60 transition-colors">
+                                  <td className="py-2 px-2 border-r border-slate-800/60 text-center text-slate-500 font-bold text-[11px]">
+                                    {realRowIdx + 1}
                                   </td>
-                                  {liveSheetData.headers.map((_, colIdx) => (
-                                    <td key={colIdx} className="py-2 px-3 border-r border-slate-800/60 whitespace-nowrap text-xs max-w-xs truncate" title={row[colIdx] || ''}>
-                                      {row[colIdx] ? (
-                                        <span className="text-slate-200">{row[colIdx]}</span>
-                                      ) : (
-                                        <span className="text-slate-600 italic font-sans text-[10px]">- ไม่ระบุ -</span>
-                                      )}
+                                  {editableHeaders.map((_, colIdx) => (
+                                    <td key={colIdx} className="p-1 border-r border-slate-800/60 min-w-[120px]">
+                                      <input
+                                        type="text"
+                                        value={row[colIdx] ?? ''}
+                                        onChange={(e) => handleCellEdit(realRowIdx, colIdx, e.target.value)}
+                                        className="w-full px-2 py-1 bg-transparent hover:bg-slate-900 focus:bg-slate-900 border border-transparent focus:border-rose-500/50 rounded text-slate-200 focus:outline-none text-xs"
+                                        placeholder="-"
+                                      />
                                     </td>
                                   ))}
+                                  <td className="py-2 px-2 text-center border-l border-slate-800/60">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteRow(realRowIdx)}
+                                      className="p-1 text-slate-500 hover:text-rose-400 transition-colors rounded hover:bg-rose-500/10 cursor-pointer"
+                                      title="ลบแถวนี้"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
                                 </tr>
                               ))}
                           </tbody>
@@ -2271,6 +2595,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                       </div>
                     </div>
                   )}
+
 
                   {/* Content Mode 2: Live Embedded Iframe View */}
                   {liveSheetMode === 'embed' && (
@@ -2418,6 +2743,91 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
         onClose={() => setIsTeacherModalOpen(false)}
         onUpdateSuccess={loadAllData}
       />
+
+      {/* Google Apps Script Setup & Code Modal */}
+      {showAppsScriptModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-3xl w-full p-6 sm:p-8 space-y-6 shadow-2xl relative my-auto">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between gap-4 border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-400">
+                  <Code className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white">วิธีติดตั้ง Google Apps Script สำหรับการแก้ไขข้อมูลสดสด 2-Way Sync</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">คัดลอกชุดโค้ดนี้ไปใส่ใน Google Sheet เพื่อเปิดสิทธิ์อ่าน-เขียนข้อมูลเรียลไทม์ผ่านเว็บแอป</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAppsScriptModal(false)}
+                className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-xl hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Installation Steps */}
+            <div className="space-y-3 bg-slate-950/80 p-4 rounded-2xl border border-slate-800 text-xs text-slate-300">
+              <h4 className="font-extrabold text-rose-400 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4" /> ขั้นตอนการติดตั้งง่ายๆ ใน 2 นาที:
+              </h4>
+              <ol className="list-decimal pl-5 space-y-1.5 leading-relaxed text-slate-300">
+                <li>เปิด Google Sheet ของท่าน &rarr; คลิกเมนูข้างบน <strong className="text-white bg-slate-800 px-1.5 py-0.5 rounded">ส่วนขยาย (Extensions)</strong> &gt; <strong className="text-white bg-slate-800 px-1.5 py-0.5 rounded">Apps Script</strong></li>
+                <li>ลบโค้ดที่มีเดิมในไฟล์ <code className="text-rose-300">Code.gs</code> ออกทั้งหมด แล้ววางชุดโค้ดด้านล่างนี้แทนที่</li>
+                <li>กดปุ่ม <strong className="text-emerald-400">บันทึก (Save / 💾)</strong></li>
+                <li>กดปุ่มมุมขวาบน <strong className="text-sky-400">การทำให้ใช้งานได้ (Deploy)</strong> &gt; <strong className="text-sky-300">การทำให้ใช้งานได้ใหม่ (New Deployment)</strong></li>
+                <li>เลือกประเภทเป็น <strong className="text-amber-300 font-mono">Web App</strong>, ตั้งค่า <strong className="text-rose-300 font-mono">Execute as: Me</strong> และ <strong className="text-emerald-300 font-mono">Who has access: Anyone (ทุกคน)</strong></li>
+                <li>กด <strong className="text-emerald-400">Deploy</strong> และคัดลอก <strong className="text-amber-300 font-mono">Web App URL</strong> มาวางในช่อง Apps Script URL ของระบบ Admin</li>
+              </ol>
+            </div>
+
+            {/* Code Box */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <Code className="w-4 h-4 text-emerald-400" /> ชุดโค้ด Apps Script (Code.gs):
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(APPS_SCRIPT_CODE_TEMPLATE);
+                    setCopiedCode(true);
+                    setTimeout(() => setCopiedCode(false), 3000);
+                  }}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                    copiedCode
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-rose-600 hover:bg-rose-700 text-white'
+                  }`}
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {copiedCode ? 'คัดลอกโค้ดเรียบร้อยแล้ว! ✓' : 'คัดลอกชุดโค้ดทั้งหมด'}
+                </button>
+              </div>
+
+              <div className="relative rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
+                <pre className="p-4 text-[11px] font-mono text-rose-300/90 overflow-x-auto max-h-60 leading-relaxed scrollbar-thin">
+                  {APPS_SCRIPT_CODE_TEMPLATE}
+                </pre>
+              </div>
+            </div>
+
+            {/* Close / Action Button */}
+            <div className="pt-2 flex justify-end gap-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowAppsScriptModal(false)}
+                className="px-6 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-md"
+              >
+                เข้าใจแล้ว / ปิดหน้าต่างนี้
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
