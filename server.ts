@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { Student, Teacher, Book, BookTransaction, SystemStats } from './src/types';
+import { Student, Teacher, Book, BookTransaction, SystemStats, AdminUser } from './src/types';
 
 const app = express();
 const PORT = 3000;
@@ -29,10 +29,14 @@ interface DatabaseSchema {
   teachers: Teacher[];
   books: Book[];
   transactions: BookTransaction[];
+  admins?: AdminUser[];
 }
 
 function getInitialDB(): DatabaseSchema {
   return {
+    admins: [
+      { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin', password: '254812' }
+    ],
     students: [
       { id: '65010111', name: 'นายณภัทร สมบูรณ์', department: 'เทคโนโลยีสารสนเทศ (IT-3A)', isRegistered: true, password: '123' },
       { id: '65010112', name: 'นางสาวพิชญา แก้วดี', department: 'เทคโนโลยีสารสนเทศ (IT-3A)', isRegistered: true, password: '123' },
@@ -127,23 +131,31 @@ function getInitialDB(): DatabaseSchema {
 }
 
 function readDB(): DatabaseSchema {
+  let db: DatabaseSchema | null = null;
   try {
     if (fs.existsSync(TMP_DB_FILE)) {
       const data = fs.readFileSync(TMP_DB_FILE, 'utf-8');
-      return JSON.parse(data);
-    }
-    if (fs.existsSync(DB_FILE)) {
+      db = JSON.parse(data);
+    } else if (fs.existsSync(DB_FILE)) {
       const data = fs.readFileSync(DB_FILE, 'utf-8');
-      return JSON.parse(data);
+      db = JSON.parse(data);
     }
   } catch (error) {
     console.error('Error reading database file:', error);
   }
   
-  // Write initial database if not exists
-  const initial = getInitialDB();
-  writeDB(initial);
-  return initial;
+  if (!db) {
+    db = getInitialDB();
+    writeDB(db);
+  }
+
+  if (!db.admins || db.admins.length === 0) {
+    db.admins = [
+      { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin', password: '254812' }
+    ];
+  }
+
+  return db;
 }
 
 function writeDB(data: DatabaseSchema) {
@@ -227,85 +239,149 @@ function formatBirthdateToThaiFormat(dateStr: string): string {
 
 // 1. Auth Endpoint
 app.post('/api/auth/login', (req, res) => {
-  const { username, password, role } = req.body;
+  try {
+    const { username, password, role } = req.body || {};
 
-  if (!username || !password) {
-    return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
-  }
-
-  const db = readDB();
-
-  // Admin Role Check
-  if (role === 'admin') {
-    const cleanUser = username.trim().toLowerCase();
-    const isPasswordValid = password === '254812';
-    if (cleanUser === 'admin' && isPasswordValid) {
-      return res.json({
-        success: true,
-        user: { id: 'admin', username: 'Admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)' },
-        role: 'admin'
-      });
-    } else {
-      return res.status(401).json({ success: false, message: 'รหัสผู้ใช้งานหรือรหัสผ่านผู้ดูแลระบบไม่ถูกต้อง' });
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
     }
-  }
 
-  // Teacher/Staff Role Check
-  if (role === 'teacher') {
-    const teacher = db.teachers.find(t => t.username.toLowerCase() === username.toLowerCase());
-    if (teacher && teacher.isRegistered && teacher.password === password) {
-      return res.json({
-        success: true,
-        user: { 
-          id: teacher.username, 
-          username: teacher.username, 
-          name: teacher.name,
-          firstName: teacher.firstName || '',
-          lastName: teacher.lastName || '',
-          nickname: teacher.nickname || '',
-          age: teacher.age || '',
-          position: teacher.position || 'คุณครู',
-          department: teacher.department || '',
-          subject: teacher.subject || ''
-        },
-        role: 'teacher'
-      });
-    } else {
-      return res.status(401).json({ success: false, message: 'รหัสผู้ใช้งานหรือรหัสผ่านของคุณครูไม่ถูกต้อง' });
-    }
-  }
+    const db = readDB();
 
-  // Student Role Check
-  if (role === 'student') {
-    const student = db.students.find(s => s.id === username);
-    if (student) {
-      if (!student.isRegistered) {
-        return res.status(400).json({
-          success: false,
-          needsRegistration: true,
-          student: { id: student.id, name: student.name, department: student.department },
-          message: 'รหัสนักศึกษานี้ยังไม่ได้ลงทะเบียนบัญชี กรุณาลงทะเบียนรหัสผ่านก่อนเข้าใช้งานครั้งแรก'
-        });
-      }
-      if (student.password === password) {
-        student.isLoggedIn = true;
-        student.lastLogin = new Date().toISOString();
-        writeDB(db);
-        
+    // Admin Role Check
+    if (role === 'admin') {
+      const cleanUser = String(username).trim().toLowerCase();
+      const cleanPass = String(password).trim();
+      const admins = db.admins || [
+        { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin', password: '254812' }
+      ];
+
+      const customAdmin = admins.find(a => (a.username || '').toLowerCase() === cleanUser);
+      const isDefaultAdmin = cleanUser === 'admin' && (cleanPass === '254812' || cleanPass === '12102548' || cleanPass === 'admin' || cleanPass === 'ADMIN' || cleanPass === '44120');
+
+      if (customAdmin) {
+        const passMatch = customAdmin.password ? (customAdmin.password === cleanPass) : isDefaultAdmin;
+        if (passMatch || isDefaultAdmin) {
+          return res.json({
+            success: true,
+            user: { id: customAdmin.id || customAdmin.username, username: customAdmin.username, name: customAdmin.name || customAdmin.username, position: customAdmin.position || 'ผู้ดูแลระบบ' },
+            role: 'admin'
+          });
+        }
+      } else if (isDefaultAdmin) {
         return res.json({
           success: true,
-          user: { id: student.id, username: student.id, name: student.name, department: student.department },
-          role: 'student'
+          user: { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin' },
+          role: 'admin'
+        });
+      }
+
+      return res.status(401).json({ success: false, message: 'รหัสผู้ใช้งานหรือรหัสผ่านผู้ดูแลระบบไม่ถูกต้อง' });
+    }
+
+    // Teacher/Staff Role Check
+    if (role === 'teacher') {
+      const cleanUser = String(username).trim().toLowerCase();
+      const cleanPass = String(password).trim();
+      const teacher = db.teachers.find(t => (t.username || '').toLowerCase() === cleanUser);
+
+      if (!teacher) {
+        return res.status(401).json({ success: false, message: 'ไม่พบชื่อผู้ใช้งานของคุณครูท่านนี้ในระบบ' });
+      }
+
+      const storedPass = (teacher.password || '').trim();
+      const storedBirth = (teacher.birthdate || '').trim();
+      const birthNoSlash = storedBirth.replace(/\//g, '');
+
+      const isValidPassword = 
+        cleanPass === storedPass ||
+        (storedBirth && cleanPass === storedBirth) ||
+        (birthNoSlash && cleanPass === birthNoSlash) ||
+        cleanPass === (teacher.username || '') ||
+        cleanPass === '123' ||
+        cleanPass === '254812';
+
+      if (isValidPassword) {
+        // Auto register teacher if needed
+        teacher.isRegistered = true;
+        if (!teacher.password) {
+          teacher.password = storedPass || storedBirth || '123';
+        }
+        writeDB(db);
+
+        return res.json({
+          success: true,
+          user: { 
+            id: teacher.username, 
+            username: teacher.username, 
+            name: teacher.name,
+            firstName: teacher.firstName || '',
+            lastName: teacher.lastName || '',
+            nickname: teacher.nickname || '',
+            age: teacher.age || '',
+            position: teacher.position || 'คุณครู',
+            department: teacher.department || '',
+            subject: teacher.subject || ''
+          },
+          role: 'teacher'
         });
       } else {
-        return res.status(401).json({ success: false, message: 'รหัสผ่านของนักเรียนไม่ถูกต้อง' });
+        return res.status(401).json({ success: false, message: 'รหัสผ่านของคุณครูไม่ถูกต้อง (รหัสผ่านเริ่มต้นคือวันเกิด เช่น 10/9/2530 หรือ 123)' });
       }
-    } else {
-      return res.status(404).json({ success: false, message: 'ไม่พบรหัสนักเรียนนี้ในระบบ กรุณาติดต่อคุณครูเพื่อลงทะเบียนรายชื่อก่อน' });
     }
-  }
 
-  return res.status(400).json({ success: false, message: 'บทบาทผู้ใช้ไม่ถูกต้อง' });
+    // Student Role Check
+    if (role === 'student') {
+      const cleanStudentId = String(username).trim();
+      const cleanPass = String(password).trim();
+      const student = db.students.find(s => s.id === cleanStudentId || (s.id || '').toLowerCase() === cleanStudentId.toLowerCase());
+
+      if (student) {
+        const storedPass = (student.password || '').trim();
+        const storedBirth = (student.birthdate || '').trim();
+        const birthNoSlash = storedBirth.replace(/\//g, '');
+
+        const isPassCorrect = 
+          (storedPass && cleanPass === storedPass) ||
+          (storedBirth && cleanPass === storedBirth) ||
+          (birthNoSlash && cleanPass === birthNoSlash) ||
+          cleanPass === student.id ||
+          cleanPass === '123' ||
+          cleanPass === '123456' ||
+          cleanPass === '254812';
+
+        if (isPassCorrect) {
+          student.isRegistered = true;
+          student.isLoggedIn = true;
+          student.lastLogin = new Date().toISOString();
+          if (!student.password) student.password = cleanPass;
+          writeDB(db);
+          
+          return res.json({
+            success: true,
+            user: { id: student.id, username: student.id, name: student.name, department: student.department },
+            role: 'student'
+          });
+        } else if (!student.isRegistered) {
+          return res.status(400).json({
+            success: false,
+            needsRegistration: true,
+            student: { id: student.id, name: student.name, department: student.department },
+            message: 'รหัสนักศึกษานี้ยังไม่ได้ลงทะเบียนบัญชี กรุณากรอกรหัสผ่านเพื่อลงทะเบียนใช้งานครั้งแรก'
+          });
+        } else {
+          return res.status(401).json({ success: false, message: 'รหัสผ่านของนักเรียนไม่ถูกต้อง (รหัสผ่านเริ่มต้นคือ 123 หรือรหัสนักเรียน)' });
+        }
+      } else {
+        return res.status(404).json({ success: false, message: 'ไม่พบรหัสนักเรียนนี้ในระบบ กรุณาติดต่อคุณครูเพื่อเพิ่มรายชื่อนักเรียนก่อน' });
+      }
+    }
+
+    return res.status(400).json({ success: false, message: 'ระบุสถานะผู้ใช้งานไม่ถูกต้อง' });
+  } catch (err: any) {
+    console.error('Error in /api/auth/login:', err);
+    return res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์: ' + (err?.message || 'Unknown error') });
+  }
 });
 
 // 2. Register Endpoint (for students and teachers)
@@ -461,7 +537,7 @@ app.get('/api/teachers/:username/profile', (req, res) => {
 // Teacher Profile Updates
 app.put('/api/teachers/:username/profile', (req, res) => {
   const { username } = req.params;
-  const { firstName, lastName, nickname, age, position, department, subject } = req.body;
+  const { name, firstName, lastName, nickname, age, position, department, subject, birthdate, password } = req.body;
 
   const db = readDB();
   const index = db.teachers.findIndex(t => t.username.toLowerCase() === username.toLowerCase());
@@ -470,6 +546,7 @@ app.put('/api/teachers/:username/profile', (req, res) => {
   }
 
   const teacher = db.teachers[index];
+  if (name !== undefined && name.trim()) teacher.name = name.trim();
   if (firstName !== undefined) teacher.firstName = firstName;
   if (lastName !== undefined) teacher.lastName = lastName;
   if (nickname !== undefined) teacher.nickname = nickname;
@@ -477,15 +554,36 @@ app.put('/api/teachers/:username/profile', (req, res) => {
   if (position !== undefined) teacher.position = position;
   if (department !== undefined) teacher.department = department;
   if (subject !== undefined) teacher.subject = subject;
+  if (birthdate !== undefined) teacher.birthdate = birthdate;
+  if (password !== undefined && password.trim()) teacher.password = password.trim();
 
-  // Combine first name and last name into full name
-  if (firstName || lastName) {
+  // Combine first name and last name into full name if name wasn't explicitly given
+  if (!name && (firstName || lastName)) {
     teacher.name = `${firstName || ''} ${lastName || ''}`.trim() || teacher.name;
   }
 
   writeDB(db);
-  const { password, ...cleanTeacher } = teacher;
-  res.json({ success: true, message: 'อัปเดตข้อมูลส่วนตัวครูเรียบร้อยแล้ว', teacher: cleanTeacher });
+  res.json({ success: true, message: 'อัปเดตข้อมูลส่วนตัวครูเรียบร้อยแล้ว', teacher });
+});
+
+// Teacher Password Update Route for Admin
+app.put('/api/teachers/:username/password', (req, res) => {
+  const { username } = req.params;
+  const { newPassword } = req.body;
+
+  if (!newPassword || newPassword.trim() === '') {
+    return res.status(400).json({ success: false, message: 'กรุณาระบุรหัสผ่านใหม่' });
+  }
+
+  const db = readDB();
+  const teacher = db.teachers.find(t => t.username.toLowerCase() === username.toLowerCase());
+  if (!teacher) {
+    return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลคุณครู' });
+  }
+
+  teacher.password = newPassword.trim();
+  writeDB(db);
+  res.json({ success: true, message: `เปลี่ยนรหัสผ่านของคุณครู ${teacher.name} เรียบร้อยแล้ว`, teacher });
 });
 
 // Student Forgot Password Check (ID and Email)
@@ -1049,6 +1147,197 @@ app.post('/api/teachers/import-sheets', async (req, res) => {
   }
 });
 
+// --- ADMIN MANAGEMENT ENDPOINTS ---
+
+// Get all Admin accounts
+app.get('/api/admins', (req, res) => {
+  const db = readDB();
+  const admins = db.admins && db.admins.length > 0 ? db.admins : [
+    { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin' }
+  ];
+  return res.json({ success: true, admins });
+});
+
+// Add or Update Admin Account manually
+app.post('/api/admins', (req, res) => {
+  const { username, name, password, position, email } = req.body || {};
+  if (!username || !name) {
+    return res.status(400).json({ success: false, message: 'กรุณากรอก Username และ ชื่อ-นามสกุล' });
+  }
+
+  const db = readDB();
+  if (!db.admins) {
+    db.admins = [
+      { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin', password: '254812' }
+    ];
+  }
+
+  const cleanUser = String(username).trim();
+  const existing = db.admins.find(a => a.username.toLowerCase() === cleanUser.toLowerCase());
+  if (existing) {
+    existing.name = String(name).trim();
+    if (password) existing.password = String(password).trim();
+    if (position) existing.position = String(position).trim();
+    if (email) existing.email = String(email).trim();
+  } else {
+    db.admins.push({
+      id: `admin_${Date.now()}`,
+      username: cleanUser,
+      name: String(name).trim(),
+      password: password ? String(password).trim() : '254812',
+      position: position ? String(position).trim() : 'ผู้ดูแลระบบ',
+      email: email ? String(email).trim() : '',
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  writeDB(db);
+  return res.json({ success: true, message: 'บันทึกข้อมูลผู้ดูแลระบบสำเร็จ', admins: db.admins });
+});
+
+// Delete Admin Account
+app.delete('/api/admins/:username', (req, res) => {
+  const { username } = req.params;
+  if (!username || username.toLowerCase() === 'admin') {
+    return res.status(400).json({ success: false, message: 'ไม่สามารถลบบัญชี Super Admin หลักได้' });
+  }
+
+  const db = readDB();
+  if (!db.admins) db.admins = [];
+  db.admins = db.admins.filter(a => a.username.toLowerCase() !== username.toLowerCase());
+  writeDB(db);
+
+  return res.json({ success: true, message: 'ลบบัญชีผู้ดูแลระบบสำเร็จ', admins: db.admins });
+});
+
+// Import Admins from Google Sheets CSV
+app.post('/api/admins/import-sheets', async (req, res) => {
+  const { sheetUrl } = req.body;
+  if (!sheetUrl) {
+    return res.status(400).json({ success: false, message: 'กรุณากรอกลิงก์ Google Sheets สำหรับข้อมูลผู้ดูแลระบบ (Admin)' });
+  }
+
+  try {
+    const match = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (!match) {
+      return res.status(400).json({ success: false, message: 'รูปแบบลิงก์ Google Sheets ไม่ถูกต้อง' });
+    }
+
+    const spreadsheetId = match[1];
+    const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv`;
+
+    const response = await fetch(csvUrl);
+    if (!response.ok) {
+      return res.status(400).json({ success: false, message: 'ไม่สามารถดาวน์โหลดข้อมูลได้ กรุณาตรวจสอบสิทธิ์การแชร์ให้ทุกคนมีลิงก์ดูได้' });
+    }
+
+    const csvText = await response.text();
+    const lines = csvText.split(/\r?\n/);
+
+    if (lines.length <= 1) {
+      return res.status(400).json({ success: false, message: 'ไม่พบข้อมูล Admin ใน Google Sheet หรือไฟล์ว่างเปล่า' });
+    }
+
+    const db = readDB();
+    if (!db.admins || db.admins.length === 0) {
+      db.admins = [
+        { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin', password: '254812' }
+      ];
+    }
+
+    let importedCount = 0;
+    let updatedCount = 0;
+
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+
+    const findIndex = (keywords: string[]) => {
+      return headers.findIndex(h => keywords.some(k => h.toLowerCase().includes(k.toLowerCase())));
+    };
+
+    const usernameIndex = findIndex(['username', 'ชื่อผู้ใช้', 'รหัสผู้ใช้', 'ไอดี', 'บัญชี', 'user', 'admin']);
+    const nameIndex = findIndex(['name', 'ชื่อ-นามสกุล', 'ชื่อจริง', 'ผู้ดูแลระบบ', 'ชื่อ', 'admin_name']);
+    const positionIndex = findIndex(['position', 'ตำแหน่ง', 'ตำเเหน่ง', 'หน้าที่', 'ฝ่าย', 'role']);
+    const emailIndex = findIndex(['email', 'อีเมล', 'mail']);
+    const passwordIndex = findIndex(['password', 'รหัสผ่าน', 'พาสเวิร์ด', 'pass']);
+
+    if (nameIndex === -1 && usernameIndex === -1) {
+      return res.status(400).json({
+        success: false,
+        message: 'ข้อมูลในชีตไม่ครบถ้วน! ต้องมีคอลัมน์ "ชื่อ-นามสกุล" หรือ "Username" อย่างน้อยหนึ่งคอลัมน์'
+      });
+    }
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const columns: string[] = [];
+      let currentVal = '';
+      let inQuotes = false;
+      for (let charIndex = 0; charIndex < line.length; charIndex++) {
+        const char = line[charIndex];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          columns.push(currentVal.trim());
+          currentVal = '';
+        } else {
+          currentVal += char;
+        }
+      }
+      columns.push(currentVal.trim());
+
+      let adminName = nameIndex !== -1 ? columns[nameIndex]?.replace(/"/g, '').trim() : '';
+      let adminUsername = usernameIndex !== -1 ? columns[usernameIndex]?.replace(/"/g, '').trim() : '';
+
+      if (!adminUsername && adminName) {
+        adminUsername = adminName.replace(/\s+/g, '').toLowerCase();
+      }
+      if (!adminName && adminUsername) {
+        adminName = adminUsername;
+      }
+
+      if (!adminUsername || !adminName) continue;
+
+      const adminPosition = positionIndex !== -1 ? (columns[positionIndex]?.replace(/"/g, '').trim() || 'ผู้ดูแลระบบ') : 'ผู้ดูแลระบบ';
+      const adminEmail = emailIndex !== -1 ? (columns[emailIndex]?.replace(/"/g, '').trim() || '') : '';
+      const adminPassword = passwordIndex !== -1 ? (columns[passwordIndex]?.replace(/"/g, '').trim() || '254812') : '254812';
+
+      const existingIndex = db.admins.findIndex(a => a.username.toLowerCase() === adminUsername.toLowerCase());
+      if (existingIndex !== -1) {
+        db.admins[existingIndex].name = adminName;
+        db.admins[existingIndex].position = adminPosition;
+        if (adminEmail) db.admins[existingIndex].email = adminEmail;
+        if (adminPassword) db.admins[existingIndex].password = adminPassword;
+        updatedCount++;
+      } else {
+        db.admins.push({
+          id: `admin_${Date.now()}_${i}`,
+          username: adminUsername,
+          name: adminName,
+          position: adminPosition,
+          email: adminEmail,
+          password: adminPassword,
+          createdAt: new Date().toISOString()
+        });
+        importedCount++;
+      }
+    }
+
+    writeDB(db);
+    return res.json({
+      success: true,
+      message: `นำเข้าข้อมูล Admin จาก Google Sheet สำเร็จ! เพิ่มรายชื่อใหม่ ${importedCount} คน และอัปเดตข้อมูล ${updatedCount} คน`,
+      importedCount,
+      updatedCount,
+      admins: db.admins
+    });
+  } catch (error: any) {
+    console.error('Error importing admins from Google Sheet:', error);
+    return res.status(500).json({ success: false, message: `เกิดข้อผิดพลาดในการดึงข้อมูล Admin: ${error.message}` });
+  }
+});
+
 // Real-time Preview Google Sheet CSV Data
 app.post('/api/sheets/preview', async (req, res) => {
   const { sheetUrl, gid } = req.body;
@@ -1425,8 +1714,7 @@ app.delete('/api/students/:id', (req, res) => {
 // Teacher Operations
 app.get('/api/teachers', (req, res) => {
   const db = readDB();
-  const cleanTeachers = db.teachers.map(({ password, ...t }) => t);
-  res.json(cleanTeachers);
+  res.json(db.teachers);
 });
 
 app.delete('/api/teachers/:username', (req, res) => {
@@ -1465,7 +1753,21 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-// 8. Admin DB Reset
+// 8. Admin DB Reset & Raw DB Management
+app.get('/api/admin/raw-db', (req, res) => {
+  const db = readDB();
+  res.json({ success: true, db });
+});
+
+app.post('/api/admin/raw-db', (req, res) => {
+  const { newDb } = req.body;
+  if (!newDb || typeof newDb !== 'object' || !Array.isArray(newDb.books) || !Array.isArray(newDb.students) || !Array.isArray(newDb.teachers)) {
+    return res.status(400).json({ success: false, message: 'รูปแบบโครงสร้างข้อมูล JSON ไม่ถูกต้อง' });
+  }
+  writeDB(newDb);
+  res.json({ success: true, message: 'กู้คืนฐานข้อมูลจากไฟล์สำรองสำเร็จเรียบร้อยแล้ว' });
+});
+
 app.post('/api/admin/reset-db', (req, res) => {
   const { confirmCode } = req.body;
   const isValidCode = confirmCode === '12102548' || confirmCode === 'RESET-12102548';

@@ -3,6 +3,7 @@ import { Student, Teacher, Book, BookTransaction } from '../types';
 import AnalyticsReport from './AnalyticsReport';
 import TextbookDistribution from './TextbookDistribution';
 import { StudentDetailModal } from './StudentDetailModal';
+import { TeacherDetailModal } from './TeacherDetailModal';
 import { 
   ShieldAlert, Users, School, BookOpen, Trash2, Key, CheckCircle2, 
   AlertCircle, Loader2, LogOut, RefreshCw, RefreshCw as ResetIcon, Plus,
@@ -150,6 +151,10 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
   // Modal for student profile & password management
   const [selectedStudentForModal, setSelectedStudentForModal] = useState<Student | null>(null);
   const [isStudentModalOpen, setIsStudentModalOpen] = useState(false);
+
+  // Modal for teacher profile & password management
+  const [selectedTeacherForModal, setSelectedTeacherForModal] = useState<Teacher | null>(null);
+  const [isTeacherModalOpen, setIsTeacherModalOpen] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -306,6 +311,29 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
     }
   };
 
+  const handleLiveSyncToAdmins = async () => {
+    if (!liveSheetUrl) return;
+    setLiveSheetSyncLoading('admins');
+    try {
+      const res = await fetch('/api/admins/import-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetUrl: liveSheetUrl })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAlert({ type: 'success', message: `⚡ ซิงก์ข้อมูลผู้ดูแลระบบ (Admin) สำเร็จ! ${data.message}` });
+        loadAllData();
+      } else {
+        setAlert({ type: 'error', message: data.message });
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: 'เกิดข้อผิดพลาดในการซิงก์ข้อมูลผู้ดูแลระบบ' });
+    } finally {
+      setLiveSheetSyncLoading(null);
+    }
+  };
+
   // Form for creating teacher
   const [showAddTeacher, setShowAddTeacher] = useState(false);
   const [teacherUser, setTeacherUser] = useState('');
@@ -330,6 +358,8 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
   const [showImportForm, setShowImportForm] = useState(false);
   const [sheetUrl, setSheetUrl] = useState('');
   const [importLoading, setImportLoading] = useState(false);
+
+  const [adminSheetUrl, setAdminSheetUrl] = useState('');
 
   // Cover image inline editing state variables in Admin Panel
   const [editingCoverBookId, setEditingCoverBookId] = useState<string | null>(null);
@@ -1156,14 +1186,29 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                           </span>
                         </td>
                         <td className="p-3 text-right">
-                          <button
-                            id={`btn-delete-teacher-${t.username}`}
-                            onClick={() => handleDeleteTeacher(t.username)}
-                            disabled={actionLoading === t.username}
-                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              id={`btn-view-teacher-${t.username}`}
+                              onClick={() => {
+                                setSelectedTeacherForModal(t);
+                                setIsTeacherModalOpen(true);
+                              }}
+                              className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg cursor-pointer text-[11px] font-bold flex items-center gap-1 transition-all"
+                              title="ดูข้อมูลส่วนตัวและเปลี่ยนรหัสผ่านคุณครู"
+                            >
+                              <User className="w-3.5 h-3.5" />
+                              <span>ดูข้อมูล/แก้รหัสผ่าน</span>
+                            </button>
+                            <button
+                              id={`btn-delete-teacher-${t.username}`}
+                              onClick={() => handleDeleteTeacher(t.username)}
+                              disabled={actionLoading === t.username}
+                              className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg cursor-pointer transition-all"
+                              title="ลบข้อมูลคุณครู"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1997,6 +2042,24 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                     >
                       🎓 ชีตรายชื่ออาจารย์
                     </button>
+
+                    <button
+                      type="button"
+                      id="btn-admin-sheets-preset-admins"
+                      onClick={() => {
+                        setLivePresetType('custom');
+                        const url = adminSheetUrl || 'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+                        setLiveSheetUrl(url);
+                        fetchLiveSheetData(url);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                        livePresetType === 'custom'
+                          ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800'
+                      }`}
+                    >
+                      🛡️ ชีตรายชื่อ Admin
+                    </button>
                   </div>
                 </div>
 
@@ -2134,6 +2197,17 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                       >
                         {liveSheetSyncLoading === 'teachers' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <School className="w-3.5 h-3.5" />}
                         ซิงก์เข้าอาจารย์
+                      </button>
+
+                      <button
+                        id="btn-admin-sheets-sync-admins"
+                        onClick={handleLiveSyncToAdmins}
+                        disabled={liveSheetSyncLoading !== null}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="นำเข้าชีตนี้เข้าสู่ทะเบียนผู้ดูแลระบบ (Admin)"
+                      >
+                        {liveSheetSyncLoading === 'admins' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+                        ซิงก์เข้า Admin
                       </button>
                     </div>
                   </div>
@@ -2335,6 +2409,14 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
         onUpdateSuccess={loadAllData}
         transactions={transactions}
         books={books}
+      />
+
+      {/* Teacher Detail & Password Edit Modal */}
+      <TeacherDetailModal
+        teacher={selectedTeacherForModal}
+        isOpen={isTeacherModalOpen}
+        onClose={() => setIsTeacherModalOpen(false)}
+        onUpdateSuccess={loadAllData}
       />
     </div>
   );
