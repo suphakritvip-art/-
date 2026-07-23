@@ -144,13 +144,18 @@ function readDB(): DatabaseSchema {
     console.error('Error reading database file:', error);
   }
   
-  if (!db) {
-    db = getInitialDB();
+  const initial = getInitialDB();
+  if (!db || typeof db !== 'object') {
+    db = initial;
     writeDB(db);
   }
 
-  if (!db.admins || db.admins.length === 0) {
-    db.admins = [
+  if (!Array.isArray(db.students)) db.students = initial.students || [];
+  if (!Array.isArray(db.teachers)) db.teachers = initial.teachers || [];
+  if (!Array.isArray(db.books)) db.books = initial.books || [];
+  if (!Array.isArray(db.transactions)) db.transactions = initial.transactions || [];
+  if (!Array.isArray(db.admins) || db.admins.length === 0) {
+    db.admins = initial.admins || [
       { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', position: 'Super Admin', password: '254812' }
     ];
   }
@@ -161,17 +166,16 @@ function readDB(): DatabaseSchema {
 function writeDB(data: DatabaseSchema) {
   try {
     if (!process.env.VERCEL) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
-      return;
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+        return;
+      } catch (err) {
+        console.warn('Could not write to local DB file, trying /tmp:', err);
+      }
     }
-  } catch (error) {
-    console.warn('Could not write to local DB file, falling back to /tmp:', error);
-  }
-
-  try {
     fs.writeFileSync(TMP_DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
   } catch (error) {
-    console.error('Error writing database file to /tmp:', error);
+    console.error('Error writing database file:', error);
   }
 }
 
