@@ -498,7 +498,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
                         id="login-username"
                         type="text"
                         required
-                        placeholder={role === 'student' ? 'เช่น 65010111' : role === 'admin' ? 'admin' : 'ชื่อภาษาอังกฤษของคุณครู (เช่น somsaki)'}
+                        placeholder={role === 'student' ? 'เช่น 65010111' : role === 'admin' ? 'ชื่อผู้ใช้งาน' : 'ชื่อภาษาอังกฤษของคุณครู (เช่น somsaki)'}
                         value={role === 'student' ? studentId : username}
                         onChange={(e) => role === 'student' ? setStudentId(e.target.value) : setUsername(e.target.value)}
                         className="w-full px-4 py-3 bg-white/[0.03] hover:bg-white/[0.05] border border-slate-800 focus:border-emerald-500/80 focus:ring-4 focus:ring-emerald-500/10 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none transition-all text-sm"

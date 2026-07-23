@@ -7,6 +7,7 @@ import { Student, Teacher, Book, BookTransaction, SystemStats } from './src/type
 const app = express();
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'database.json');
+const TMP_DB_FILE = path.join('/tmp', 'database.json');
 
 app.use(express.json());
 
@@ -115,6 +116,10 @@ function getInitialDB(): DatabaseSchema {
 
 function readDB(): DatabaseSchema {
   try {
+    if (fs.existsSync(TMP_DB_FILE)) {
+      const data = fs.readFileSync(TMP_DB_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
     if (fs.existsSync(DB_FILE)) {
       const data = fs.readFileSync(DB_FILE, 'utf-8');
       return JSON.parse(data);
@@ -131,9 +136,18 @@ function readDB(): DatabaseSchema {
 
 function writeDB(data: DatabaseSchema) {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    if (!process.env.VERCEL) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+      return;
+    }
   } catch (error) {
-    console.error('Error writing database file:', error);
+    console.warn('Could not write to local DB file, falling back to /tmp:', error);
+  }
+
+  try {
+    fs.writeFileSync(TMP_DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('Error writing database file to /tmp:', error);
   }
 }
 
@@ -211,7 +225,8 @@ app.post('/api/auth/login', (req, res) => {
 
   // Admin Role Check
   if (role === 'admin') {
-    if (username === 'admin' && password === '44120') {
+    const cleanUser = username.trim().toLowerCase();
+    if (cleanUser === 'admin' && (password === 'admin' || password === 'ADMIN' || password === '44120')) {
       return res.json({
         success: true,
         user: { id: 'admin', username: 'admin', name: 'ผู้ดูแลระบบสูงสุด (Super Admin)' },
@@ -1449,4 +1464,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
