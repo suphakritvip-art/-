@@ -29,6 +29,7 @@ function getInitialDB(): DatabaseSchema {
       { id: '65010116', name: 'นางสาวชลดา สวยงาม', department: 'วิศวกรรมคอมพิวเตอร์ (CPE-1)', isRegistered: false }
     ],
     teachers: [
+      { username: 'wisarut', name: 'อาจารย์วิศรุต (ทดสอบ)', isRegistered: true, password: '10/9/2530' },
       { username: 'teacher1', name: 'ครูสมชาย สายชล', isRegistered: true, password: '123' },
       { username: 'teacher2', name: 'ครูนงลักษณ์ ใจดี', isRegistered: true, password: '123' }
     ],
@@ -139,6 +140,63 @@ function writeDB(data: DatabaseSchema) {
 // Ensure DB is initialized
 readDB();
 
+// Helper to format any date/birthdate string into Thai Buddhist Era format DD/MM/YYYY
+function formatBirthdateToThaiFormat(dateStr: string): string {
+  if (!dateStr) return '';
+  const trimmed = dateStr.trim();
+  
+  // If it's already in DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY format
+  const dmyRegex = /^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/;
+  const matchDmy = trimmed.match(dmyRegex);
+  if (matchDmy) {
+    let day = parseInt(matchDmy[1], 10);
+    let month = parseInt(matchDmy[2], 10);
+    let year = parseInt(matchDmy[3], 10);
+    // If year is Gregorian (e.g. < 2400), convert to Buddhist Era (add 543)
+    if (year < 2400) {
+      year += 543;
+    }
+    const dStr = day.toString().padStart(2, '0');
+    const mStr = month.toString().padStart(2, '0');
+    return `${dStr}/${mStr}/${year}`;
+  }
+
+  // If it is in YYYY-MM-DD or YYYY/MM/DD format
+  const ymdRegex = /^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/;
+  const matchYmd = trimmed.match(ymdRegex);
+  if (matchYmd) {
+    let year = parseInt(matchYmd[1], 10);
+    let month = parseInt(matchYmd[2], 10);
+    let day = parseInt(matchYmd[3], 10);
+    if (year < 2400) {
+      year += 543;
+    }
+    const dStr = day.toString().padStart(2, '0');
+    const mStr = month.toString().padStart(2, '0');
+    return `${dStr}/${mStr}/${year}`;
+  }
+
+  // Try standard Date parsing for other formats (like ISO)
+  try {
+    const parsed = new Date(trimmed);
+    if (!isNaN(parsed.getTime())) {
+      const day = parsed.getDate();
+      const month = parsed.getMonth() + 1;
+      let year = parsed.getFullYear();
+      if (year < 2400) {
+        year += 543;
+      }
+      const dStr = day.toString().padStart(2, '0');
+      const mStr = month.toString().padStart(2, '0');
+      return `${dStr}/${mStr}/${year}`;
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  return trimmed; // fallback to original
+}
+
 // --- API Endpoints ---
 
 // 1. Auth Endpoint
@@ -170,7 +228,18 @@ app.post('/api/auth/login', (req, res) => {
     if (teacher && teacher.isRegistered && teacher.password === password) {
       return res.json({
         success: true,
-        user: { id: teacher.username, username: teacher.username, name: teacher.name },
+        user: { 
+          id: teacher.username, 
+          username: teacher.username, 
+          name: teacher.name,
+          firstName: teacher.firstName || '',
+          lastName: teacher.lastName || '',
+          nickname: teacher.nickname || '',
+          age: teacher.age || '',
+          position: teacher.position || 'คุณครู',
+          department: teacher.department || '',
+          subject: teacher.subject || ''
+        },
         role: 'teacher'
       });
     } else {
@@ -191,6 +260,10 @@ app.post('/api/auth/login', (req, res) => {
         });
       }
       if (student.password === password) {
+        student.isLoggedIn = true;
+        student.lastLogin = new Date().toISOString();
+        writeDB(db);
+        
         return res.json({
           success: true,
           user: { id: student.id, username: student.id, name: student.name, department: student.department },
@@ -209,7 +282,7 @@ app.post('/api/auth/login', (req, res) => {
 
 // 2. Register Endpoint (for students and teachers)
 app.post('/api/auth/register', (req, res) => {
-  const { id, username, name, password, department, position, role } = req.body;
+  const { id, username, name, password, department, position, birthdate, role, email } = req.body;
   const db = readDB();
 
   if (role === 'student') {
@@ -224,6 +297,9 @@ app.post('/api/auth/register', (req, res) => {
       }
       db.students[index].password = password;
       db.students[index].isRegistered = true;
+      db.students[index].isLoggedIn = true;
+      db.students[index].lastLogin = new Date().toISOString();
+      db.students[index].email = email || '';
       if (name) db.students[index].name = name;
       if (department) db.students[index].department = department;
     } else {
@@ -233,7 +309,10 @@ app.post('/api/auth/register', (req, res) => {
         department: department || 'ทั่วไป',
         password,
         isRegistered: true,
-        createdAt: new Date().toISOString()
+        isLoggedIn: true,
+        lastLogin: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        email: email || ''
       });
     }
 
@@ -242,8 +321,16 @@ app.post('/api/auth/register', (req, res) => {
   }
 
   if (role === 'teacher') {
-    if (!username || !password || !name) {
-      return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลชื่อบัญชี ชื่อ-นามสกุล และรหัสผ่าน' });
+    const { isCreatedByAdmin } = req.body;
+    if (!isCreatedByAdmin) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'การลงทะเบียนบัญชีสำหรับคุณครู/อาจารย์ ต้องดำเนินการโดยผู้ดูแลระบบ (Admin) เท่านั้น เพื่อความปลอดภัยของระบบ' 
+      });
+    }
+
+    if (!username || !name) {
+      return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลชื่อบัญชี และชื่อ-นามสกุล' });
     }
 
     const existing = db.teachers.find(t => t.username.toLowerCase() === username.toLowerCase());
@@ -251,11 +338,15 @@ app.post('/api/auth/register', (req, res) => {
       return res.status(400).json({ success: false, message: 'ชื่อผู้ใช้งานสำหรับคุณครูนี้มีในระบบแล้ว' });
     }
 
+    const formattedBirthdate = birthdate ? formatBirthdateToThaiFormat(birthdate) : '';
+    const finalPassword = password || formattedBirthdate || username;
+
     db.teachers.push({
       username,
       name,
       position: position || 'คุณครู',
-      password,
+      birthdate: formattedBirthdate,
+      password: finalPassword,
       isRegistered: true,
       createdAt: new Date().toISOString()
     });
@@ -265,6 +356,141 @@ app.post('/api/auth/register', (req, res) => {
   }
 
   return res.status(400).json({ success: false, message: 'บทบาทไม่ถูกต้อง' });
+});
+
+// Student Profile Fetch
+app.get('/api/students/:id/profile', (req, res) => {
+  const { id } = req.params;
+  const db = readDB();
+  const student = db.students.find(s => s.id === id);
+  if (!student) {
+    return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลนักเรียน' });
+  }
+  res.json({ success: true, student });
+});
+
+// Student Profile Updates
+app.put('/api/students/:id/profile', (req, res) => {
+  const { id } = req.params;
+  const { name, department, weight, height, bloodGroup, birthdate, religion, age, nickname, email } = req.body;
+
+  const db = readDB();
+  const index = db.students.findIndex(s => s.id === id);
+  if (index === -1) {
+    return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลนักเรียน' });
+  }
+
+  const student = db.students[index];
+  if (name !== undefined) student.name = name;
+  if (department !== undefined) student.department = department;
+  if (weight !== undefined) student.weight = weight;
+  if (height !== undefined) student.height = height;
+  if (bloodGroup !== undefined) student.bloodGroup = bloodGroup;
+  if (birthdate !== undefined) student.birthdate = birthdate;
+  if (religion !== undefined) student.religion = religion;
+  if (age !== undefined) student.age = age;
+  if (nickname !== undefined) student.nickname = nickname;
+  if (email !== undefined) student.email = email;
+
+  writeDB(db);
+  res.json({ success: true, message: 'อัปเดตข้อมูลส่วนตัวเรียบร้อยแล้ว', student });
+});
+
+// Teacher Profile Fetch
+app.get('/api/teachers/:username/profile', (req, res) => {
+  const { username } = req.params;
+  const db = readDB();
+  const teacher = db.teachers.find(t => t.username.toLowerCase() === username.toLowerCase());
+  if (!teacher) {
+    return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลคุณครู' });
+  }
+  // Return without password for security
+  const { password, ...cleanTeacher } = teacher;
+  res.json({ success: true, teacher: cleanTeacher });
+});
+
+// Teacher Profile Updates
+app.put('/api/teachers/:username/profile', (req, res) => {
+  const { username } = req.params;
+  const { firstName, lastName, nickname, age, position, department, subject } = req.body;
+
+  const db = readDB();
+  const index = db.teachers.findIndex(t => t.username.toLowerCase() === username.toLowerCase());
+  if (index === -1) {
+    return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลคุณครู' });
+  }
+
+  const teacher = db.teachers[index];
+  if (firstName !== undefined) teacher.firstName = firstName;
+  if (lastName !== undefined) teacher.lastName = lastName;
+  if (nickname !== undefined) teacher.nickname = nickname;
+  if (age !== undefined) teacher.age = age;
+  if (position !== undefined) teacher.position = position;
+  if (department !== undefined) teacher.department = department;
+  if (subject !== undefined) teacher.subject = subject;
+
+  // Combine first name and last name into full name
+  if (firstName || lastName) {
+    teacher.name = `${firstName || ''} ${lastName || ''}`.trim() || teacher.name;
+  }
+
+  writeDB(db);
+  const { password, ...cleanTeacher } = teacher;
+  res.json({ success: true, message: 'อัปเดตข้อมูลส่วนตัวครูเรียบร้อยแล้ว', teacher: cleanTeacher });
+});
+
+// Student Forgot Password Check (ID and Email)
+app.post('/api/auth/student-forgot-password', (req, res) => {
+  const { studentId, email } = req.body;
+  if (!studentId || !email) {
+    return res.status(400).json({ success: false, message: 'กรุณากรอกรหัสประจำตัวและอีเมล' });
+  }
+
+  const db = readDB();
+  const student = db.students.find(s => s.id === studentId);
+  if (!student) {
+    return res.status(404).json({ success: false, message: 'ไม่พบรหัสประจำตัวนักเรียนนี้ในระบบ' });
+  }
+
+  if (!student.isRegistered) {
+    return res.status(400).json({ success: false, message: 'รหัสประจำตัวนี้ยังไม่ได้ลงทะเบียนใช้งานจริง' });
+  }
+
+  const savedEmail = (student.email || '').toLowerCase().trim();
+  const inputEmail = email.toLowerCase().trim();
+
+  if (!student.email || savedEmail !== inputEmail) {
+    return res.status(400).json({ success: false, message: 'อีเมลไม่ตรงกับที่ระบุตอนลงทะเบียนแรกเข้า' });
+  }
+
+  // Return reset token along with simulation data
+  const resetToken = 'reset_' + Math.random().toString(36).substr(2, 9);
+  return res.json({
+    success: true,
+    message: 'ตรวจสอบข้อมูลถูกต้อง ระบบจำลองการส่งลิงก์กู้คืนไปยังอีเมลสำเร็จ',
+    resetToken,
+    studentId: student.id,
+    currentPassword: student.password
+  });
+});
+
+// Student Reset Password Action
+app.post('/api/auth/student-reset-password', (req, res) => {
+  const { studentId, newPassword } = req.body;
+  if (!studentId || !newPassword) {
+    return res.status(400).json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบถ้วน' });
+  }
+
+  const db = readDB();
+  const index = db.students.findIndex(s => s.id === studentId);
+  if (index === -1) {
+    return res.status(404).json({ success: false, message: 'ไม่พบข้อมูลนักเรียน' });
+  }
+
+  db.students[index].password = newPassword;
+  writeDB(db);
+
+  return res.json({ success: true, message: 'เปลี่ยนรหัสผ่านใหม่เรียบร้อยแล้ว สามารถเข้าสู่ระบบด้วยรหัสผ่านใหม่ได้ทันที' });
 });
 
 // 3. Books API: GET, POST, PUT, DELETE
@@ -535,7 +761,12 @@ app.post('/api/students/import-sheets', async (req, res) => {
 
     const idIndex = findIndex(['id', 'รหัสประจำตัว', 'รหัสนักเรียน', 'รหัสนักศึกษา', 'รหัส']);
     const nameIndex = findIndex(['name', 'ชื่อ-นามสกุล', 'ชื่อ', 'ชื่อผู้รับ']);
-    const deptIndex = findIndex(['department', 'dept', 'ห้องเรียน', 'สาขา', 'แผนกวิชา', 'ห้อง', 'ชั้นปี']);
+    
+    // Find separate columns if they exist
+    const levelIndex = findIndex(['ระดับชั้น', 'ชั้นปี', 'ระดับ', 'ชั้น']);
+    const roomIndex = findIndex(['ห้องเรียน', 'ห้อง']);
+    const majorIndex = findIndex(['สาขาวิชา', 'สาขา', 'แผนกวิชา', 'แผนก']);
+    const deptIndex = findIndex(['department', 'dept']);
 
     if (idIndex === -1 || nameIndex === -1) {
       return res.status(400).json({ 
@@ -566,7 +797,49 @@ app.post('/api/students/import-sheets', async (req, res) => {
 
       const studentId = columns[idIndex]?.replace(/"/g, '').trim();
       const studentName = columns[nameIndex]?.replace(/"/g, '').trim();
-      const studentDept = deptIndex !== -1 ? (columns[deptIndex]?.replace(/"/g, '').trim() || 'ทั่วไป') : 'ทั่วไป';
+      
+      let studentDept = 'ทั่วไป';
+      if (levelIndex !== -1 || roomIndex !== -1 || majorIndex !== -1) {
+        const levelVal = levelIndex !== -1 ? (columns[levelIndex]?.replace(/"/g, '').trim() || '') : '';
+        let roomVal = roomIndex !== -1 ? (columns[roomIndex]?.replace(/"/g, '').trim() || '') : '';
+        const majorVal = majorIndex !== -1 ? (columns[majorIndex]?.replace(/"/g, '').trim() || '') : '';
+        
+        // If room has format X/Y (e.g. 1/1, 1/2) and level contains X (e.g. ปวส.1), extract only the second part Y to prevent duplicates like ปวส.1/1/1
+        if (levelVal && roomVal) {
+          const roomParts = roomVal.split('/');
+          if (roomParts.length === 2) {
+            const prefix = roomParts[0].trim();
+            const suffix = roomParts[1].trim();
+            if (levelVal.toLowerCase().includes(prefix.toLowerCase())) {
+              roomVal = suffix;
+            }
+          }
+        }
+
+        if (levelVal) {
+          if (roomVal) {
+            studentDept = `${levelVal}/${roomVal}`;
+          } else {
+            studentDept = levelVal;
+          }
+          if (majorVal && majorVal !== 'ทั่วไป') {
+            studentDept += ` ${majorVal}`;
+          }
+        } else if (majorVal) {
+          studentDept = majorVal;
+          if (roomVal) {
+            studentDept += `/${roomVal}`;
+          }
+        } else if (roomVal) {
+          studentDept = roomVal;
+        }
+      } else if (deptIndex !== -1) {
+        studentDept = columns[deptIndex]?.replace(/"/g, '').trim() || 'ทั่วไป';
+      } else {
+        // Fallback search to single column department
+        const fallbackDeptIndex = findIndex(['ห้องเรียน', 'สาขา', 'แผนกวิชา', 'ห้อง', 'ชั้นปี', 'department', 'dept']);
+        studentDept = fallbackDeptIndex !== -1 ? (columns[fallbackDeptIndex]?.replace(/"/g, '').trim() || 'ทั่วไป') : 'ทั่วไป';
+      }
 
       if (!studentId || !studentName) continue;
 
@@ -641,6 +914,7 @@ app.post('/api/teachers/import-sheets', async (req, res) => {
     const usernameIndex = findIndex(['username', 'ชื่อผู้ใช้งาน', 'รหัสอาจารย์', 'ชื่อบัญชี', 'ชื่อล็อกอิน', 'รหัสคุณครู']);
     const nameIndex = findIndex(['name', 'ชื่อ-นามสกุล', 'ชื่อจริง', 'ครู', 'อาจารย์', 'ชื่อผู้สอน']);
     const positionIndex = findIndex(['position', 'ตำแหน่ง', 'ตำเเหน่ง', 'หน้าที่', 'กลุ่มสาระ', 'ฝ่าย']);
+    const birthdateIndex = findIndex(['birthdate', 'birthday', 'วันเกิด', 'วันเดือนปีเกิด', 'วัน/เดือน/ปีเกิด']);
     const passwordIndex = findIndex(['password', 'รหัสผ่าน', 'พาสเวิร์ด']);
 
     if (nameIndex === -1) {
@@ -680,10 +954,12 @@ app.post('/api/teachers/import-sheets', async (req, res) => {
       }
 
       const teacherPosition = positionIndex !== -1 ? (columns[positionIndex]?.replace(/"/g, '').trim() || 'คุณครู') : 'คุณครู';
+      const teacherBirthdateRaw = birthdateIndex !== -1 ? (columns[birthdateIndex]?.replace(/"/g, '').trim() || '') : '';
+      const teacherBirthdate = formatBirthdateToThaiFormat(teacherBirthdateRaw);
 
       let teacherPassword = passwordIndex !== -1 ? (columns[passwordIndex]?.replace(/"/g, '').trim()) : '';
       if (!teacherPassword) {
-        teacherPassword = teacherUsername; // default password is username itself
+        teacherPassword = teacherBirthdate || teacherUsername; // default password is birthdate if available, otherwise username itself
       }
 
       if (!teacherUsername || !teacherName) continue;
@@ -692,6 +968,7 @@ app.post('/api/teachers/import-sheets', async (req, res) => {
       if (existingIndex !== -1) {
         db.teachers[existingIndex].name = teacherName;
         db.teachers[existingIndex].position = teacherPosition;
+        db.teachers[existingIndex].birthdate = teacherBirthdate;
         if (teacherPassword) {
           db.teachers[existingIndex].password = teacherPassword;
         }
@@ -701,6 +978,7 @@ app.post('/api/teachers/import-sheets', async (req, res) => {
           username: teacherUsername,
           name: teacherName,
           position: teacherPosition,
+          birthdate: teacherBirthdate,
           password: teacherPassword || '123456',
           isRegistered: true,
           createdAt: new Date().toISOString()
@@ -719,6 +997,76 @@ app.post('/api/teachers/import-sheets', async (req, res) => {
   } catch (error: any) {
     console.error('Error importing teachers from Google Sheet:', error);
     return res.status(500).json({ success: false, message: `เกิดข้อผิดพลาดในการดึงข้อมูลครู/อาจารย์: ${error.message}` });
+  }
+});
+
+// Real-time Preview Google Sheet CSV Data
+app.post('/api/sheets/preview', async (req, res) => {
+  const { sheetUrl, gid } = req.body;
+  if (!sheetUrl) {
+    return res.status(400).json({ success: false, message: 'กรุณากรอกลิงก์ Google Sheets' });
+  }
+
+  try {
+    const match = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    if (!match) {
+      return res.status(400).json({ success: false, message: 'รูปแบบลิงก์ Google Sheets ไม่ถูกต้อง (ต้องเป็นลิงก์ docs.google.com/spreadsheets/d/...)' });
+    }
+
+    const spreadsheetId = match[1];
+    let csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv`;
+    if (gid) {
+      csvUrl += `&gid=${gid}`;
+    }
+
+    const response = await fetch(csvUrl, { cache: 'no-store' });
+    if (!response.ok) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ไม่สามารถดึงข้อมูลสดจาก Google Sheets ได้ กรุณาเปิดสิทธิ์การแชร์ให้ "ทุกคนที่มีลิงก์สามารถดูได้" (Anyone with link can view)' 
+      });
+    }
+
+    const csvText = await response.text();
+    const lines = csvText.split(/\r?\n/).filter(line => line.trim().length > 0);
+
+    if (lines.length === 0) {
+      return res.status(400).json({ success: false, message: 'ไม่พบข้อมูลใน Google Sheet หรือไฟล์ว่างเปล่า' });
+    }
+
+    const parseLine = (line: string): string[] => {
+      const cols: string[] = [];
+      let val = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          cols.push(val.trim().replace(/^"|"$/g, ''));
+          val = '';
+        } else {
+          val += char;
+        }
+      }
+      cols.push(val.trim().replace(/^"|"$/g, ''));
+      return cols;
+    };
+
+    const headers = parseLine(lines[0]);
+    const rows = lines.slice(1).map(line => parseLine(line));
+
+    res.json({
+      success: true,
+      spreadsheetId,
+      fetchedAt: new Date().toISOString(),
+      headers,
+      rows,
+      totalRows: rows.length,
+      embedUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/preview`
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการโหลดข้อมูล: ' + error.message });
   }
 });
 
@@ -809,33 +1157,78 @@ app.post('/api/transactions', (req, res) => {
     return res.json({ success: true, message: 'บันทึกการแจกจ่ายหนังสือสำเร็จ', transaction: newTx });
   }
 
-  if (type === 'import') {
-    // Manual book receive/import (Logged by Teacher/Admin)
-    book.receivedQty += txQty;
-    book.stockQty = book.receivedQty - book.givenOutQty;
+  return res.status(400).json({ success: false, message: 'ประเภทธุรกรรมไม่ถูกต้อง' });
+});
 
-    const newTx: BookTransaction = {
-      id: 'tx_' + Date.now(),
-      bookId: book.id,
-      bookTitle: book.title,
-      userId,
-      userName: userName || 'ฝ่ายคลังหนังสือ',
-      userRole: 'teacher',
-      qty: txQty,
-      type: 'import',
-      status: 'approved',
-      timestamp: new Date().toISOString(),
-      approvedBy: approvedBy || 'คุณครู',
-      notes: notes || 'นำเข้าหนังสือเพิ่ม'
-    };
+// Batch book giveaway / distribution for reopening classes
+app.post('/api/transactions/batch-give-out', (req, res) => {
+  const { studentIds, bookIds, qty, notes, approvedBy } = req.body;
 
-    db.transactions.push(newTx);
-    writeDB(db);
-
-    return res.json({ success: true, message: 'บันทึกการนำเข้าหนังสือเพิ่มเติมสำเร็จ', transaction: newTx });
+  if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'กรุณาระบุรายชื่อนักเรียน' });
   }
 
-  return res.status(400).json({ success: false, message: 'ประเภทธุรกรรมไม่ถูกต้อง' });
+  if (!bookIds || !Array.isArray(bookIds) || bookIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'กรุณาระบุรายชื่อหนังสือที่ต้องการแจก' });
+  }
+
+  const db = readDB();
+  const txQty = Number(qty) || 1;
+  const createdTransactions: any[] = [];
+
+  // Check stocks first to avoid partial failures
+  for (const bookId of bookIds) {
+    const book = db.books.find(b => b.id === bookId);
+    if (!book) {
+      return res.status(404).json({ success: false, message: `ไม่พบหนังสือรหัส ${bookId}` });
+    }
+    const totalRequiredQty = txQty * studentIds.length;
+    if (book.stockQty < totalRequiredQty) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `หนังสือ "${book.title}" มีจำนวนไม่พอสำหรับแจกทั้งหมด ${studentIds.length} คน (ต้องการ ${totalRequiredQty} เล่ม, คงเหลือ ${book.stockQty} เล่ม)` 
+      });
+    }
+  }
+
+  // Perform distributions
+  studentIds.forEach(studentId => {
+    const student = db.students.find(s => s.id === studentId);
+    const studentName = student ? student.name : 'นักศึกษาด่วน';
+
+    bookIds.forEach(bookId => {
+      const book = db.books.find(b => b.id === bookId)!;
+
+      book.givenOutQty += txQty;
+      book.stockQty = book.receivedQty - book.givenOutQty;
+
+      const newTx: BookTransaction = {
+        id: 'tx_batch_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+        bookId: book.id,
+        bookTitle: book.title,
+        userId: studentId,
+        userName: studentName,
+        userRole: 'student',
+        qty: txQty,
+        type: 'give_out',
+        status: 'approved',
+        timestamp: new Date().toISOString(),
+        approvedBy: approvedBy || 'คุณครู',
+        notes: notes || 'แจกตามระดับชั้นเทศกาลเปิดเทอม'
+      };
+
+      db.transactions.push(newTx);
+      createdTransactions.push(newTx);
+    });
+  });
+
+  writeDB(db);
+
+  res.json({ 
+    success: true, 
+    message: `ทำการแจกหนังสือสำเร็จ บันทึกแจกจ่ายทั้งหมด ${createdTransactions.length} รายการ แก่นักเรียน ${studentIds.length} คน`,
+    count: createdTransactions.length
+  });
 });
 
 // Approve pending borrow request

@@ -1,15 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { Book, BookTransaction, Student } from '../types';
+import AnalyticsReport from './AnalyticsReport';
+import TextbookDistribution from './TextbookDistribution';
 import { 
   Plus, Trash2, Edit2, Users, FileSpreadsheet, Check, X,
   RefreshCw, LogOut, Loader2, Sparkles, AlertCircle, CheckCircle2,
   FileDown, PlusCircle, HelpCircle, BookOpen, Search, Filter, 
-  ChevronRight, HeartHandshake, Undo2, Ban, Import, Trash, Eye
+  ChevronRight, HeartHandshake, Undo2, Ban, Import, Trash, Eye, ChevronDown
 } from 'lucide-react';
 
 interface TeacherDashboardProps {
-  teacher: { username: string; name: string };
+  teacher: any;
   onLogout: () => void;
+  onProfileUpdate?: (updatedUser: any) => void;
+  forceOpenProfile?: boolean;
+  onCloseProfile?: () => void;
 }
 
 const parseStudentDept = (deptStr: string) => {
@@ -18,35 +23,122 @@ const parseStudentDept = (deptStr: string) => {
     return { level: clean || 'ทั่วไป', room: '-', major: 'ทั่วไป' };
   }
 
-  // Check if it has a slash e.g. "ม.4/1" or "ปวช.1/2 ช่างยนต์" or "ม.4/2 ทั่วไป"
-  const regex = /^([^/]+)\/([^/\s]+)(?:\s+(.+))?$/;
-  const match = clean.match(regex);
-  if (match) {
-    return {
-      level: match[1].trim(),
-      room: match[2].trim(),
-      major: (match[3] || 'ทั่วไป').trim()
-    };
+  let level = '';
+  let room = '-';
+  let major = clean;
+
+  // 1. Try to find Level (ระดับชั้น) such as ปวช.1, ปวช.2, ปวช.3, ปวส.1, ปวส.2, ม.1, ม.2, ม.3, ม.4, ม.5, ม.6, ปวช, ปวส
+  const levelRegex = /(ปวช\s*\.\s*[1-3]|ปวส\s*\.\s*[1-2]|ม\s*\.\s*[1-6]|ปวช|ปวส)/i;
+  const levelMatch = clean.match(levelRegex);
+  if (levelMatch) {
+    level = levelMatch[1].replace(/\s+/g, ''); // e.g. "ปวส.1"
+    major = major.replace(levelMatch[0], '').trim();
   }
 
-  // Fallback if no slash: check if it has space
-  const parts = clean.split(/\s+/);
-  if (parts.length >= 2) {
-    return {
-      level: parts[0].trim(),
-      room: '-',
-      major: parts.slice(1).join(' ').trim()
-    };
+  // 2. Try to find Room (ห้อง) like 1/1, 1/2, 1/3, 1/4, etc.
+  const roomRegexes = [
+    /ห้อง\s*([0-9]+\/[0-9]+)/,               // e.g. "ห้อง 1/2"
+    /ห้อง\s*([0-9]+)/,                      // e.g. "ห้อง 2"
+    /([0-9]+\/[0-9]+)/,                     // e.g. "1/2" or "1/3" or "1/4"
+    /\/([0-9]+)/                            // e.g. "/2" as in "ปวส.1/2"
+  ];
+
+  let roomMatched = false;
+  for (const regex of roomRegexes) {
+    const match = major.match(regex);
+    if (match) {
+      room = match[1] || match[0];
+      if (room.startsWith('/')) {
+        const rNum = room.replace('/', '');
+        const lvlNum = level.match(/\d+/);
+        if (lvlNum) {
+          room = `${lvlNum[0]}/${rNum}`;
+        } else {
+          room = rNum;
+        }
+      }
+      major = major.replace(match[0], '').trim();
+      roomMatched = true;
+      break;
+    }
   }
 
-  return {
-    level: clean,
-    room: '-',
-    major: 'ทั่วไป'
-  };
+  // If level was matched but no room was found yet, check if there's an orphaned slash in the remaining text or the original text
+  if (!roomMatched && level) {
+    const originalWithSlash = new RegExp(level.replace('.', '\\.') + '\\/([0-9]+)');
+    const slashMatch = clean.match(originalWithSlash);
+    if (slashMatch) {
+      const rNum = slashMatch[1];
+      const lvlNum = level.match(/\d+/);
+      if (lvlNum) {
+        room = `${lvlNum[0]}/${rNum}`;
+      } else {
+        room = rNum;
+      }
+      major = major.replace(new RegExp('\\/?' + rNum), '').trim();
+      roomMatched = true;
+    }
+  }
+
+  // 3. Check parenthesized class codes like (IT-3A), (CPE-1), (CS-2B)
+  const parenRegex = /\(([^)]+)\)/;
+  const parenMatch = major.match(parenRegex);
+  if (parenMatch) {
+    const code = parenMatch[1].trim();
+    if (room === '-') {
+      room = code;
+    }
+    if (!level) {
+      const dashNum = code.match(/-([1-4][A-Z]?)$/);
+      if (dashNum) {
+        level = `ปี ${dashNum[1]}`;
+      }
+    }
+    major = major.replace(parenMatch[0], '').trim();
+  }
+
+  // 4. Clean up the major text
+  major = major
+    .replace(/\s*ห้อง\s*/g, ' ')
+    .replace(/^\s*[\/\-,\(\)]+\s*|\s*[\/\-,\(\)]+\s*$/g, '')
+    .trim();
+
+  // 5. Fallback formatting if level is still empty
+  if (!level) {
+    const parts = clean.split(/\s+/);
+    if (parts.length >= 2) {
+      level = parts[0].trim();
+      major = parts.slice(1).join(' ').trim();
+    } else {
+      level = 'ทั่วไป';
+      major = clean;
+    }
+  }
+
+  if (!major || major === '/') {
+    major = 'ทั่วไป';
+  }
+
+  // Normalise level formatting if it matched ปวช or ปวส without dots/numbers
+  if (level === 'ปวช' || level === 'ปวส') {
+    if (room !== '-') {
+      const firstDigit = room.match(/\d/);
+      if (firstDigit) {
+        level = `${level}.${firstDigit[0]}`;
+      }
+    }
+  }
+
+  return { level, room, major };
 };
 
-export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboardProps) {
+export default function TeacherDashboard({ 
+  teacher, 
+  onLogout, 
+  onProfileUpdate,
+  forceOpenProfile,
+  onCloseProfile
+}: TeacherDashboardProps) {
   const [books, setBooks] = useState<Book[]>([]);
   const [transactions, setTransactions] = useState<BookTransaction[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
@@ -58,8 +150,55 @@ export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboard
   const [importLoading, setImportLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Active view tab: 'books' | 'approvals' | 'history' | 'roster'
-  const [activeTab, setActiveTab] = useState<'books' | 'approvals' | 'history' | 'roster'>('books');
+  // Teacher Profile state variables
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState('');
+  const [profileError, setProfileError] = useState('');
+
+  const [tFirstName, setTFirstName] = useState(teacher.firstName || '');
+  const [tLastName, setTLastName] = useState(teacher.lastName || '');
+  const [tNickname, setTNickname] = useState(teacher.nickname || '');
+  const [tAge, setTAge] = useState(teacher.age || '');
+  const [tPosition, setTPosition] = useState(teacher.position || 'คุณครู');
+  const [tDepartment, setTDepartment] = useState(teacher.department || '');
+  const [tSubject, setTSubject] = useState(teacher.subject || '');
+
+  useEffect(() => {
+    if (forceOpenProfile) {
+      setShowProfileModal(true);
+    }
+  }, [forceOpenProfile]);
+
+  useEffect(() => {
+    setTFirstName(teacher.firstName || '');
+    setTLastName(teacher.lastName || '');
+    setTNickname(teacher.nickname || '');
+    setTAge(teacher.age || '');
+    setTPosition(teacher.position || 'คุณครู');
+    setTDepartment(teacher.department || '');
+    setTSubject(teacher.subject || '');
+  }, [teacher]);
+
+  const handleCloseProfileModal = () => {
+    setShowProfileModal(false);
+    setProfileSuccess('');
+    setProfileError('');
+    if (onCloseProfile) {
+      onCloseProfile();
+    }
+  };
+
+  // Active view tab: 'books' | 'approvals' | 'history' | 'students' | 'teachers' | 'distribution' | 'analytics'
+  const [activeTab, setActiveTab] = useState<'books' | 'approvals' | 'history' | 'students' | 'teachers' | 'distribution' | 'analytics'>('books');
+
+  // Dropdown states
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [showBookDropdown, setShowBookDropdown] = useState(false);
+
+  // Teachers state
+  const [teachers, setTeachers] = useState<any[]>([]);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
 
   // Book Search & Category Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -143,10 +282,103 @@ export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboard
     }
   };
 
+  const fetchTeacherProfile = async () => {
+    setProfileLoading(true);
+    try {
+      const res = await fetch(`/api/teachers/${teacher.username}/profile`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.teacher) {
+          const t = data.teacher;
+          setTFirstName(t.firstName || '');
+          setTLastName(t.lastName || '');
+          setTNickname(t.nickname || '');
+          setTAge(t.age || '');
+          setTPosition(t.position || 'คุณครู');
+          setTDepartment(t.department || '');
+          setTSubject(t.subject || '');
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching teacher profile:', err);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const handleTeacherProfileSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileSuccess('');
+    setProfileError('');
+    setProfileLoading(true);
+
+    try {
+      const res = await fetch(`/api/teachers/${teacher.username}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: tFirstName,
+          lastName: tLastName,
+          nickname: tNickname,
+          age: tAge,
+          position: tPosition,
+          department: tDepartment,
+          subject: tSubject,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setProfileError(data.message || 'เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+        setProfileLoading(false);
+        return;
+      }
+
+      setProfileSuccess(data.message || 'บันทึกข้อมูลส่วนตัวเรียบร้อยแล้ว');
+      
+      // Update parent state
+      if (onProfileUpdate) {
+        onProfileUpdate({
+          ...teacher,
+          name: `${tFirstName} ${tLastName}`.trim() || teacher.name,
+          firstName: tFirstName,
+          lastName: tLastName,
+          nickname: tNickname,
+          age: tAge,
+          position: tPosition,
+          department: tDepartment,
+          subject: tSubject,
+        });
+      }
+
+      setProfileLoading(false);
+    } catch (err) {
+      setProfileError('ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้');
+      setProfileLoading(false);
+    }
+  };
+
+  const fetchTeachers = async () => {
+    setLoadingTeachers(true);
+    try {
+      const res = await fetch('/api/teachers');
+      if (res.ok) {
+        const data = await res.json();
+        setTeachers(data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingTeachers(false);
+    }
+  };
+
   useEffect(() => {
     fetchBooks();
     fetchTransactions();
     fetchStudents();
+    fetchTeachers();
+    fetchTeacherProfile();
   }, []);
 
   // Handle Add Book or Edit Book submit
@@ -420,34 +652,52 @@ export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboard
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
       {/* Teacher Profile Banner */}
-      <div className="bg-gradient-to-r from-teal-700 via-teal-800 to-indigo-900 text-white rounded-2xl p-6 shadow-xl mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+      <div className="bg-gradient-to-br from-sky-600 via-blue-600 to-indigo-800 text-white rounded-2xl p-6 shadow-xl shadow-sky-950/10 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 border border-sky-500/20 relative overflow-hidden">
+        <div className="absolute top-0 right-0 -mr-6 -mt-6 w-32 h-32 rounded-full bg-white/5 blur-xl"></div>
+        <div className="absolute bottom-0 left-1/4 w-20 h-20 rounded-full bg-sky-400/10 blur-lg"></div>
+        <div className="flex items-center gap-4 z-10">
           <div className="p-3 bg-white/10 rounded-2xl border border-white/15 backdrop-blur-sm">
-            <Users className="w-8 h-8 text-teal-200" />
+            <Users className="w-8 h-8 text-sky-100" />
           </div>
           <div>
-            <span className="bg-teal-500/30 text-teal-100 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+            <span className="bg-sky-500/30 text-sky-100 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
               สิทธิ์ผู้ใช้งาน: คุณครู / ผู้จัดการคลังหนังสือ
             </span>
             <h2 className="text-xl sm:text-2xl font-extrabold tracking-wide mt-1">ยินดีต้อนรับ: {teacher.name}</h2>
-            <p className="text-teal-200/80 text-xs sm:text-sm mt-0.5">คุณมีหน้าที่เช็คจำนวน ตรวจสอบหนังสือเข้าและแจกออก สามารถจัดการหนังสือและอนุมัติการยืมได้เต็มรูปแบบ</p>
+            <p className="text-sky-100/95 text-xs sm:text-sm mt-0.5">คุณมีหน้าที่เช็คจำนวน ตรวจสอบหนังสือเข้าและแจกออก สามารถจัดการหนังสือและอนุมัติการยืมได้เต็มรูปแบบ</p>
           </div>
         </div>
         
-        <div className="flex items-center gap-3 self-end md:self-center">
+        <div className="flex items-center gap-2 sm:gap-3 self-end md:self-center shrink-0">
           <button
-            onClick={() => { fetchBooks(); fetchTransactions(); fetchStudents(); }}
-            className="p-2.5 bg-white/10 hover:bg-white/15 text-white border border-white/5 rounded-xl transition-all cursor-pointer"
+            onClick={() => setShowProfileModal(true)}
+            className="h-16 px-4 bg-slate-900/40 hover:bg-slate-900/50 text-white border border-white/10 rounded-xl text-[10px] sm:text-xs font-black tracking-wide leading-tight transition-all flex items-center gap-2 cursor-pointer"
+            title="ดูและแก้ไขข้อมูลส่วนตัวของคุณครู"
+          >
+            <Users className="w-4 h-4 sm:w-5 sm:h-5 text-teal-300 shrink-0" />
+            <div className="flex flex-col text-left">
+              <span>ข้อมูล</span>
+              <span>ส่วนตัว</span>
+              <span>ครู</span>
+            </div>
+          </button>
+          <button
+            onClick={() => { fetchBooks(); fetchTransactions(); fetchStudents(); fetchTeacherProfile(); }}
+            className="h-16 w-16 flex items-center justify-center bg-slate-900/40 hover:bg-slate-900/50 text-white border border-white/10 rounded-xl transition-all cursor-pointer"
             title="รีเฟรชฐานข้อมูล"
           >
-            <RefreshCw className="w-5 h-5" />
+            <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5 text-slate-300" />
           </button>
           <button
             onClick={onLogout}
-            className="px-4 py-2.5 bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/30 text-rose-200 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer"
+            className="h-16 px-4 bg-purple-950/40 hover:bg-purple-950/50 text-purple-200 border border-purple-500/20 rounded-xl text-[10px] sm:text-xs font-black tracking-wide leading-tight transition-all flex items-center gap-2 cursor-pointer"
           >
-            <LogOut className="w-4 h-4" />
-            ออกจากระบบ
+            <LogOut className="w-4 h-4 sm:w-5 sm:h-5 text-purple-300 shrink-0" />
+            <div className="flex flex-col text-left">
+              <span>ออก</span>
+              <span>จาก</span>
+              <span>ระบบ</span>
+            </div>
           </button>
         </div>
       </div>
@@ -487,52 +737,159 @@ export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboard
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex border-b border-slate-200 mb-6 gap-2 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('books')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === 'books' 
-              ? 'border-teal-600 text-teal-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          📚 ทะเบียนหนังสือในคลัง ({books.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('approvals')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-            activeTab === 'approvals' 
-              ? 'border-teal-600 text-teal-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          ⏳ คำขอยืมรอดำเนินการ
-          {pendingRequests.length > 0 && (
-            <span className="px-1.5 py-0.5 text-[9px] font-black bg-rose-500 text-white rounded-full leading-none animate-pulse">
-              {pendingRequests.length}
-            </span>
+      <div className="flex border-b border-slate-200 mb-6 gap-4 relative">
+        
+        {/* Dropdown 1: 👥 สมาชิกในระบบ */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowUserDropdown(!showUserDropdown);
+              setShowBookDropdown(false);
+            }}
+            className={`pb-3 px-1 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap flex items-center gap-1 sm:gap-1.5 ${
+              activeTab === 'students' || activeTab === 'teachers'
+                ? 'border-sky-600 text-sky-600 font-black'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <span>👥 สมาชิกในระบบ</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showUserDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {showUserDropdown && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowUserDropdown(false)}></div>
+              <div className="absolute left-0 mt-1 w-56 sm:w-64 rounded-xl shadow-lg bg-white border border-slate-200 ring-1 ring-black/5 focus:outline-none z-40 animate-fadeIn divide-y divide-slate-100 overflow-hidden">
+                <div className="py-1.5">
+                  <button
+                    onClick={() => {
+                      setActiveTab('teachers');
+                      setShowUserDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'teachers' ? 'bg-sky-50 text-sky-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">🎓 รายชื่อคุณครูผู้จัดการ</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold">
+                      {teachers.length} คน
+                    </span>
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setActiveTab('students');
+                      setShowUserDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'students' ? 'bg-sky-50 text-sky-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">👥 รายชื่อนักเรียนและแผนก</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold">
+                      {students.length} คน
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </>
           )}
-        </button>
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === 'history' 
-              ? 'border-teal-600 text-teal-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          📋 ประวัติธุรกรรมและนำเข้าทั้งหมด
-        </button>
-        <button
-          onClick={() => setActiveTab('roster')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === 'roster' 
-              ? 'border-teal-600 text-teal-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          👤 สมาชิกนักเรียนและแผนก
-        </button>
+        </div>
+
+        {/* Dropdown 2: 📚 จัดการคลังและวิเคราะห์ */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowBookDropdown(!showBookDropdown);
+              setShowUserDropdown(false);
+            }}
+            className={`pb-3 px-1 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap flex items-center gap-1 sm:gap-1.5 ${
+              ['books', 'approvals', 'history', 'distribution', 'analytics'].includes(activeTab)
+                ? 'border-sky-600 text-sky-600 font-black'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <span>📚 ระบบจัดสรรและคลังความรู้</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showBookDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {showBookDropdown && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowBookDropdown(false)}></div>
+              <div className="absolute left-0 mt-1 w-64 sm:w-72 rounded-xl shadow-lg bg-white border border-slate-200 ring-1 ring-black/5 focus:outline-none z-40 animate-fadeIn divide-y divide-slate-100 overflow-hidden">
+                <div className="py-1.5">
+                  <button
+                    onClick={() => {
+                      setActiveTab('books');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'books' ? 'bg-sky-50 text-sky-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">📖 ทะเบียนพิกัดหนังสือ</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold">
+                      {books.length} เล่ม
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('approvals');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'approvals' ? 'bg-sky-50 text-sky-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">🔔 อนุมัติยืมและรับคืนหนังสือ</span>
+                    {pendingRequests.length > 0 && (
+                      <span className="text-[9px] font-black bg-rose-500 text-white px-2 py-0.5 rounded-full leading-none animate-pulse">
+                        {pendingRequests.length}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('history');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'history' ? 'bg-sky-50 text-sky-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">📋 ประวัติธุรกรรมและนำเข้าทั้งหมด</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('distribution');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'distribution' ? 'bg-sky-50 text-sky-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">🎁 ระบบแจกหนังสือเรียน</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('analytics');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'analytics' ? 'bg-sky-50 text-sky-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">📊 รายงานและวิเคราะห์ข้อมูล</span>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Toast Alert Feedback */}
@@ -1133,9 +1490,66 @@ export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboard
           )}
         </div>
       )}
+      {/* TAB: TEACHERS LIST (READ-ONLY FOR TEACHERS) */}
+      {activeTab === 'teachers' && (
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm space-y-4 animate-fadeIn">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-50 gap-2">
+            <div>
+              <h3 className="font-extrabold text-slate-800 text-base">ทำเนียบคุณครูและผู้บริหาร</h3>
+              <p className="text-xs text-slate-500">รายชื่อเพื่อนครูผู้จัดการคลังหนังสือเรียนและสิทธิ์การเข้าถึงข้อมูลระบบทั้งหมด</p>
+            </div>
+            <div>
+              <span className="text-xs bg-slate-100 px-3 py-1.5 rounded-xl text-slate-600 font-bold">คุณครูทั้งหมด {teachers.length} คน</span>
+            </div>
+          </div>
+
+          {/* Teachers table */}
+          <div className="border border-slate-100 rounded-xl overflow-hidden">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100 text-slate-600 font-bold">
+                  <th className="p-3">ชื่อจริง-นามสกุล</th>
+                  <th className="p-3">ตำแหน่ง</th>
+                  <th className="p-3">สิทธิ์ใช้งานระบบ</th>
+                  <th className="p-3">สถานะบัญชี</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
+                {teachers.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="p-8 text-center text-slate-400 font-bold">ไม่พบข้อมูลรายชื่อคุณครู</td>
+                  </tr>
+                ) : (
+                  teachers.map(t => (
+                    <tr key={t.username} className="hover:bg-slate-50/50">
+                      <td className="p-3 font-bold text-slate-800 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0"></span>
+                        {t.name}
+                      </td>
+                      <td className="p-3 text-slate-500 font-medium">{t.position || 'คุณครู'}</td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 bg-teal-50 text-teal-700 border border-teal-100 rounded text-[10px] font-bold">
+                          คุณครูผู้จัดการ
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className="text-xs text-emerald-600 font-extrabold flex items-center gap-1">
+                          ● เปิดใช้งาน
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+
 
       {/* TAB 4: MEMBER ROSTER MANAGEMENT */}
-      {activeTab === 'roster' && (
+      {activeTab === 'students' && (
         <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-50 gap-2">
             <div>
@@ -1290,13 +1704,20 @@ export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboard
                           </div>
                         </td>
                         <td className="p-3 text-center">
-                          {std.isRegistered ? (
-                            <span className="px-3 py-1 bg-emerald-500 text-white rounded-full font-bold text-[10px] shadow-xs inline-flex items-center gap-1 justify-center min-w-[110px]">
-                              🟢 ใช้งานอยู่ (Active)
-                            </span>
+                          {std.isRegistered || std.isLoggedIn ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="px-3 py-1 bg-emerald-500 text-white rounded-full font-bold text-[10px] shadow-xs inline-flex items-center gap-1 justify-center min-w-[110px]">
+                                🟢 ลงชื่อเข้าใช้งานแล้ว
+                              </span>
+                              {std.lastLogin && (
+                                <span className="text-[9px] text-slate-400 font-mono">
+                                  {new Date(std.lastLogin).toLocaleDateString('th-TH')} {new Date(std.lastLogin).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="px-3 py-1 bg-rose-500 text-white rounded-full font-bold text-[10px] shadow-xs inline-flex items-center gap-1 justify-center min-w-[110px]">
-                              🔴 ยังไม่เข้าระบบ
+                              🔴 ยังไม่ลงชื่อเข้าใช้
                             </span>
                           )}
                         </td>
@@ -1321,6 +1742,164 @@ export default function TeacherDashboard({ teacher, onLogout }: TeacherDashboard
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'distribution' && (
+        <TextbookDistribution 
+          books={books} 
+          students={students} 
+          currentUser={{ name: teacher.name, id: teacher.username, role: 'teacher' }} 
+          onRefreshData={() => { fetchBooks(); fetchTransactions(); fetchStudents(); }} 
+        />
+      )}
+
+      {activeTab === 'analytics' && (
+        <AnalyticsReport 
+          books={books} 
+          transactions={transactions} 
+          students={students} 
+        />
+      )}
+
+      {/* Teacher Profile Modal */}
+      {(showProfileModal || forceOpenProfile) && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden animate-scaleUp">
+            <div className="bg-gradient-to-r from-teal-700 to-indigo-800 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Users className="w-5 h-5 text-teal-200" />
+                <h3 className="font-extrabold text-base tracking-wide">👤 ข้อมูลส่วนตัวของคุณครู</h3>
+              </div>
+              <button 
+                onClick={handleCloseProfileModal}
+                className="p-1.5 hover:bg-white/10 rounded-lg text-white/80 hover:text-white transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleTeacherProfileSave} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+              {profileSuccess && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm rounded-xl font-bold flex items-center gap-2 animate-fadeIn">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{profileSuccess}</span>
+                </div>
+              )}
+              {profileError && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm rounded-xl font-bold flex items-center gap-2 animate-fadeIn">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{profileError}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500">ชื่อจริง <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    value={tFirstName}
+                    onChange={(e) => setTFirstName(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 font-bold text-slate-800"
+                    placeholder="กรอกชื่อจริง"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500">นามสกุล <span className="text-rose-500">*</span></label>
+                  <input
+                    type="text"
+                    required
+                    value={tLastName}
+                    onChange={(e) => setTLastName(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 font-bold text-slate-800"
+                    placeholder="กรอกนามสกุล"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500">ชื่อเล่น</label>
+                  <input
+                    type="text"
+                    value={tNickname}
+                    onChange={(e) => setTNickname(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 font-bold text-slate-800"
+                    placeholder="กรอกชื่อเล่น"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500">อายุ (ปี)</label>
+                  <input
+                    type="number"
+                    value={tAge}
+                    onChange={(e) => setTAge(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 font-bold text-slate-800"
+                    placeholder="กรอกอายุ"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500">ตำแหน่งงาน / สิทธิ์การเข้าถึง</label>
+                <input
+                  type="text"
+                  value={tPosition}
+                  onChange={(e) => setTPosition(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none font-bold text-slate-600 cursor-not-allowed"
+                  placeholder="เช่น คุณครูผู้ช่วย, หัวหน้าแผนก"
+                  disabled
+                />
+                <p className="text-[10px] text-slate-400">ตำแหน่งงานระบุโดยผู้ดูแลระบบหลัก</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500">แผนกที่สอน / สังกัด</label>
+                  <input
+                    type="text"
+                    value={tDepartment}
+                    onChange={(e) => setTDepartment(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 font-bold text-slate-800"
+                    placeholder="เช่น คอมพิวเตอร์ธุรกิจ, การตลาด"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500">วิชาหลักที่สอน</label>
+                  <input
+                    type="text"
+                    value={tSubject}
+                    onChange={(e) => setTSubject(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 font-bold text-slate-800"
+                    placeholder="เช่น ภาษาอังกฤษ, คณิตศาสตร์"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 flex gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleCloseProfileModal}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer text-center font-bold"
+                >
+                  ปิดหน้าต่าง
+                </button>
+                <button
+                  type="submit"
+                  disabled={profileLoading}
+                  className="flex-1 py-2.5 bg-teal-600 hover:bg-teal-700 disabled:bg-teal-300 text-white font-bold rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {profileLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      กำลังบันทึก...
+                    </>
+                  ) : 'บันทึกการเปลี่ยนแปลง'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

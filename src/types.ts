@@ -14,13 +14,30 @@ export interface Student {
   department: string;
   password?: string;
   isRegistered: boolean;
+  isLoggedIn?: boolean;
+  lastLogin?: string;
   createdAt?: string;
+  weight?: string;
+  height?: string;
+  bloodGroup?: string;
+  birthdate?: string;
+  religion?: string;
+  age?: string;
+  nickname?: string;
+  email?: string;
 }
 
 export interface Teacher {
   username: string; // Teacher Username
   name: string;
+  firstName?: string;
+  lastName?: string;
+  nickname?: string;
+  age?: string;
   position?: string; // ตำแหน่ง
+  department?: string; // แผนกที่สอน
+  subject?: string; // วิชาที่สอน
+  birthdate?: string; // วันเดือนปีเกิด
   password?: string;
   isRegistered: boolean;
   createdAt?: string;

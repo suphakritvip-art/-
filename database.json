@@ -1,0 +1,164 @@
+{
+  "students": [
+    {
+      "id": "65010111",
+      "name": "นายณภัทร สมบูรณ์",
+      "department": "เทคโนโลยีสารสนเทศ (IT-3A)",
+      "isRegistered": true,
+      "password": "123"
+    },
+    {
+      "id": "65010112",
+      "name": "นางสาวพิชญา แก้วดี",
+      "department": "เทคโนโลยีสารสนเทศ (IT-3A)",
+      "isRegistered": true,
+      "password": "123"
+    },
+    {
+      "id": "65010113",
+      "name": "นายธนพล สุขสันต์",
+      "department": "เทคโนโลยีสารสนเทศ (IT-3A)",
+      "isRegistered": false
+    },
+    {
+      "id": "65010114",
+      "name": "นางสาววิภาดา รักเรียน",
+      "department": "วิทยาการคอมพิวเตอร์ (CS-2B)",
+      "isRegistered": false
+    },
+    {
+      "id": "65010115",
+      "name": "นายกิตติคุณ เมืองไทย",
+      "department": "วิทยาการคอมพิวเตอร์ (CS-2B)",
+      "isRegistered": false
+    },
+    {
+      "id": "65010116",
+      "name": "นางสาวชลดา สวยงาม",
+      "department": "วิศวกรรมคอมพิวเตอร์ (CPE-1)",
+      "isRegistered": false
+    },
+    {
+      "id": "123456789",
+      "name": "Suphakrit binsalam",
+      "department": "1/2 ปวส.1 เทคโนโลยีธุรกิจดิจิทัล",
+      "password": "12102548",
+      "isRegistered": true,
+      "isLoggedIn": true,
+      "lastLogin": "2026-07-11T07:52:49.814Z",
+      "createdAt": "2026-07-11T07:34:22.161Z"
+    }
+  ],
+  "teachers": [
+    {
+      "username": "wisarut",
+      "name": "อาจารย์วิศรุต (ทดสอบ)",
+      "isRegistered": true,
+      "password": "10/9/2530"
+    },
+    {
+      "username": "teacher1",
+      "name": "ครูสมชาย สายชล",
+      "isRegistered": true,
+      "password": "123"
+    },
+    {
+      "username": "teacher2",
+      "name": "ครูนงลักษณ์ ใจดี",
+      "isRegistered": true,
+      "password": "123"
+    }
+  ],
+  "books": [
+    {
+      "id": "B001",
+      "title": "หลักการเขียนโปรแกรมคอมพิวเตอร์ด้วยภาษา Python",
+      "author": "ดร.สมชาย สายชล",
+      "category": "เทคโนโลยีและคอมพิวเตอร์",
+      "receivedQty": 50,
+      "givenOutQty": 12,
+      "stockQty": 38,
+      "location": "ชั้นหนังสือ A1",
+      "curriculum": "หลักสูตรประกาศนียบัตรวิชาชีพชั้นสูง (ปวส.) สาขาวิชาเทคโนโลยีสารสนเทศ",
+      "coverUrl": "https://images.unsplash.com/photo-1515879218367-8466d910aaa4?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3"
+    },
+    {
+      "id": "B002",
+      "title": "ฟิสิกส์ทั่วไป 1 สำหรับวิศวกร",
+      "author": "ศ.ดร.พงษ์ศักดิ์ ชินนาถกูล",
+      "category": "วิทยาศาสตร์และคณิตศาสตร์",
+      "receivedQty": 30,
+      "givenOutQty": 7,
+      "stockQty": 23,
+      "location": "ชั้นหนังสือ B3",
+      "curriculum": "หลักสูตรวิศวกรรมศาสตรบัณฑิต สาขาวิชาวิศวกรรมคอมพิวเตอร์",
+      "coverUrl": "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3"
+    },
+    {
+      "id": "B003",
+      "title": "การออกแบบเว็บไซต์และอินเตอร์เฟสผู้ใช้ (UI/UX Design)",
+      "author": "อ.รพีพรรณ สุวรรณฉัตร",
+      "category": "เทคโนโลยีและคอมพิวเตอร์",
+      "receivedQty": 20,
+      "givenOutQty": 0,
+      "stockQty": 20,
+      "location": "ชั้นหนังสือ A2",
+      "curriculum": "หลักสูตรประกาศนียบัตรวิชาชีพชั้นสูง (ปวส.) สาขาวิชาเทคโนโลยีสารสนเทศ",
+      "coverUrl": "https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3"
+    },
+    {
+      "id": "B004",
+      "title": "ภาษาอังกฤษเพื่อการสื่อสารทางธุรกิจ",
+      "author": "Mr. John Smith",
+      "category": "ภาษาศาสตร์",
+      "receivedQty": 40,
+      "givenOutQty": 10,
+      "stockQty": 30,
+      "location": "ชั้นหนังสือ C1",
+      "curriculum": "หลักสูตรประกาศนียบัตรวิชาชีพ (ปวช.) สาขาวิชาการจัดการธุรกิจค้าปลีก",
+      "coverUrl": "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx_1",
+      "bookId": "B001",
+      "bookTitle": "หลักการเขียนโปรแกรมคอมพิวเตอร์ด้วยภาษา Python",
+      "userId": "65010111",
+      "userName": "นายณภัทร สมบูรณ์",
+      "userRole": "student",
+      "qty": 1,
+      "type": "borrow",
+      "status": "approved",
+      "timestamp": "2026-07-08T06:48:17.320Z",
+      "approvedBy": "ครูสมชาย สายชล"
+    },
+    {
+      "id": "tx_2",
+      "bookId": "B002",
+      "bookTitle": "ฟิสิกส์ทั่วไป 1 สำหรับวิศวกร",
+      "userId": "65010112",
+      "userName": "นางสาวพิชญา แก้วดี",
+      "userRole": "student",
+      "qty": 1,
+      "type": "borrow",
+      "status": "approved",
+      "timestamp": "2026-07-11T06:18:17.320Z",
+      "approvedBy": "ผู้ดูแลระบบสูงสุด (Super Admin)"
+    },
+    {
+      "id": "tx_1783755319172",
+      "bookId": "B002",
+      "bookTitle": "ฟิสิกส์ทั่วไป 1 สำหรับวิศวกร",
+      "userId": "123456789",
+      "userName": "Suphakrit binsalam",
+      "userRole": "student",
+      "qty": 1,
+      "type": "borrow",
+      "status": "approved",
+      "timestamp": "2026-07-11T07:35:19.172Z",
+      "notes": "นักเรียนแผนก 1/2 ปวส.1 เทคโนโลยีธุรกิจดิจิทัล ยื่นคำขอยืมด้วยตนเอง",
+      "approvedBy": "ผู้ดูแลระบบสูงสุด (Super Admin)"
+    }
+  ]
+}

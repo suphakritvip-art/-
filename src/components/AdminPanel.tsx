@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Student, Teacher, Book, BookTransaction } from '../types';
+import AnalyticsReport from './AnalyticsReport';
+import TextbookDistribution from './TextbookDistribution';
 import { 
   ShieldAlert, Users, School, BookOpen, Trash2, Key, CheckCircle2, 
   AlertCircle, Loader2, LogOut, RefreshCw, RefreshCw as ResetIcon, Plus,
   Database, Info, AlertTriangle, FileSpreadsheet, Check, X, Sparkles, BookMarked,
-  Search, HeartHandshake, Undo2
+  Search, HeartHandshake, Undo2, ChevronDown, ExternalLink
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -18,32 +20,113 @@ const parseStudentDept = (deptStr: string) => {
     return { level: clean || 'ทั่วไป', room: '-', major: 'ทั่วไป' };
   }
 
-  // Check if it has a slash e.g. "ม.4/1" or "ปวช.1/2 ช่างยนต์" or "ม.4/2 ทั่วไป"
-  const regex = /^([^/]+)\/([^/\s]+)(?:\s+(.+))?$/;
-  const match = clean.match(regex);
-  if (match) {
-    return {
-      level: match[1].trim(),
-      room: match[2].trim(),
-      major: (match[3] || 'ทั่วไป').trim()
-    };
+  let level = '';
+  let room = '-';
+  let major = clean;
+
+  // 1. Try to find Level (ระดับชั้น) such as ปวช.1, ปวช.2, ปวช.3, ปวส.1, ปวส.2, ม.1, ม.2, ม.3, ม.4, ม.5, ม.6, ปวช, ปวส
+  const levelRegex = /(ปวช\s*\.\s*[1-3]|ปวส\s*\.\s*[1-2]|ม\s*\.\s*[1-6]|ปวช|ปวส)/i;
+  const levelMatch = clean.match(levelRegex);
+  if (levelMatch) {
+    level = levelMatch[1].replace(/\s+/g, ''); // e.g. "ปวส.1"
+    major = major.replace(levelMatch[0], '').trim();
   }
 
-  // Fallback if no slash: check if it has space
-  const parts = clean.split(/\s+/);
-  if (parts.length >= 2) {
-    return {
-      level: parts[0].trim(),
-      room: '-',
-      major: parts.slice(1).join(' ').trim()
-    };
+  // 2. Try to find Room (ห้อง) like 1/1, 1/2, 1/3, 1/4, etc.
+  const roomRegexes = [
+    /ห้อง\s*([0-9]+\/[0-9]+)/,               // e.g. "ห้อง 1/2"
+    /ห้อง\s*([0-9]+)/,                      // e.g. "ห้อง 2"
+    /([0-9]+\/[0-9]+)/,                     // e.g. "1/2" or "1/3" or "1/4"
+    /\/([0-9]+)/                            // e.g. "/2" as in "ปวส.1/2"
+  ];
+
+  let roomMatched = false;
+  for (const regex of roomRegexes) {
+    const match = major.match(regex);
+    if (match) {
+      room = match[1] || match[0];
+      if (room.startsWith('/')) {
+        const rNum = room.replace('/', '');
+        const lvlNum = level.match(/\d+/);
+        if (lvlNum) {
+          room = `${lvlNum[0]}/${rNum}`;
+        } else {
+          room = rNum;
+        }
+      }
+      major = major.replace(match[0], '').trim();
+      roomMatched = true;
+      break;
+    }
   }
 
-  return {
-    level: clean,
-    room: '-',
-    major: 'ทั่วไป'
-  };
+  // If level was matched but no room was found yet, check if there's an orphaned slash in the remaining text or the original text
+  if (!roomMatched && level) {
+    const originalWithSlash = new RegExp(level.replace('.', '\\.') + '\\/([0-9]+)');
+    const slashMatch = clean.match(originalWithSlash);
+    if (slashMatch) {
+      const rNum = slashMatch[1];
+      const lvlNum = level.match(/\d+/);
+      if (lvlNum) {
+        room = `${lvlNum[0]}/${rNum}`;
+      } else {
+        room = rNum;
+      }
+      major = major.replace(new RegExp('\\/?' + rNum), '').trim();
+      roomMatched = true;
+    }
+  }
+
+  // 3. Check parenthesized class codes like (IT-3A), (CPE-1), (CS-2B)
+  const parenRegex = /\(([^)]+)\)/;
+  const parenMatch = major.match(parenRegex);
+  if (parenMatch) {
+    const code = parenMatch[1].trim();
+    if (room === '-') {
+      room = code;
+    }
+    if (!level) {
+      const dashNum = code.match(/-([1-4][A-Z]?)$/);
+      if (dashNum) {
+        level = `ปี ${dashNum[1]}`;
+      }
+    }
+    major = major.replace(parenMatch[0], '').trim();
+  }
+
+  // 4. Clean up the major text
+  major = major
+    .replace(/\s*ห้อง\s*/g, ' ')
+    .replace(/^\s*[\/\-,\(\)]+\s*|\s*[\/\-,\(\)]+\s*$/g, '')
+    .trim();
+
+  // 5. Fallback formatting if level is still empty
+  if (!level) {
+    const parts = clean.split(/\s+/);
+    if (parts.length >= 2) {
+      level = parts[0].trim();
+      major = parts.slice(1).join(' ').trim();
+    } else {
+      level = 'ทั่วไป';
+      major = clean;
+    }
+  }
+
+  if (!major || major === '/') {
+    major = 'ทั่วไป';
+  }
+
+  // Normalise level formatting if it matched ปวช or ปวส without dots/numbers
+  if (level === 'ปวช' || level === 'ปวส') {
+    if (room !== '-') {
+      const firstDigit = room.match(/\d/);
+      if (firstDigit) {
+        level = `${level}.${firstDigit[0]}`;
+      }
+    }
+  }
+
+  return { level, room, major };
 };
 
 export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
@@ -67,7 +150,11 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   // Active sub-tab
-  const [activeTab, setActiveTab] = useState<'teachers' | 'students' | 'books' | 'approvals'>('teachers');
+  const [activeTab, setActiveTab] = useState<'teachers' | 'students' | 'books' | 'approvals' | 'distribution' | 'analytics' | 'sheets'>('teachers');
+
+  // Dropdown menus states
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [showBookDropdown, setShowBookDropdown] = useState(false);
 
   // Book and student search query state
   const [bookSearchQuery, setBookSearchQuery] = useState('');
@@ -83,11 +170,143 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
   const [teacherSheetUrl, setTeacherSheetUrl] = useState('');
   const [teacherImportLoading, setTeacherImportLoading] = useState(false);
 
+  // Google Sheets Real-Time Monitor States
+  const [liveSheetUrl, setLiveSheetUrl] = useState('https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms');
+  const [liveSheetGid, setLiveSheetGid] = useState('0');
+  const [livePresetType, setLivePresetType] = useState<'books' | 'students' | 'teachers' | 'custom'>('books');
+  const [liveSheetData, setLiveSheetData] = useState<{
+    headers: string[];
+    rows: string[][];
+    fetchedAt: string;
+    totalRows: number;
+    spreadsheetId: string;
+    embedUrl: string;
+  } | null>(null);
+  const [liveSheetLoading, setLiveSheetLoading] = useState(false);
+  const [liveSheetAutoRefresh, setLiveSheetAutoRefresh] = useState(false);
+  const [liveSheetFilter, setLiveSheetFilter] = useState('');
+  const [liveSheetMode, setLiveSheetMode] = useState<'table' | 'embed'>('table');
+  const [liveSheetSyncLoading, setLiveSheetSyncLoading] = useState<string | null>(null);
+
+  const fetchLiveSheetData = async (targetUrl?: string, targetGid?: string) => {
+    const url = targetUrl !== undefined ? targetUrl : liveSheetUrl;
+    if (!url) return;
+    setLiveSheetLoading(true);
+    try {
+      const res = await fetch('/api/sheets/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetUrl: url, gid: targetGid !== undefined ? targetGid : liveSheetGid })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLiveSheetData(data);
+      } else {
+        setAlert({ type: 'error', message: data.message || 'ไม่สามารถโหลดข้อมูล Google Sheet ได้' });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAlert({ type: 'error', message: 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Google Sheet' });
+    } finally {
+      setLiveSheetLoading(false);
+    }
+  };
+
+  // Auto-refresh interval when enabled
+  useEffect(() => {
+    let interval: any;
+    if (liveSheetAutoRefresh && activeTab === 'sheets') {
+      fetchLiveSheetData();
+      interval = setInterval(() => {
+        fetchLiveSheetData();
+      }, 12000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [liveSheetAutoRefresh, activeTab, liveSheetUrl, liveSheetGid]);
+
+  useEffect(() => {
+    if (activeTab === 'sheets' && !liveSheetData && !liveSheetLoading) {
+      fetchLiveSheetData();
+    }
+  }, [activeTab]);
+
+  const handleLiveSyncToBooks = async () => {
+    if (!liveSheetUrl) return;
+    setLiveSheetSyncLoading('books');
+    try {
+      const res = await fetch('/api/books/import-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetUrl: liveSheetUrl })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAlert({ type: 'success', message: `⚡ ซิงก์ข้อมูลลงทะเบียนหนังสือสำเร็จ! ${data.message}` });
+        loadAllData();
+      } else {
+        setAlert({ type: 'error', message: data.message });
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: 'เกิดข้อผิดพลาดในการซิงก์ข้อมูลหนังสือ' });
+    } finally {
+      setLiveSheetSyncLoading(null);
+    }
+  };
+
+  const handleLiveSyncToStudents = async () => {
+    if (!liveSheetUrl) return;
+    setLiveSheetSyncLoading('students');
+    try {
+      const res = await fetch('/api/students/import-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetUrl: liveSheetUrl })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAlert({ type: 'success', message: `⚡ ซิงก์ข้อมูลนักเรียนสำเร็จ! ${data.message}` });
+        loadAllData();
+      } else {
+        setAlert({ type: 'error', message: data.message });
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: 'เกิดข้อผิดพลาดในการซิงก์ข้อมูลนักเรียน' });
+    } finally {
+      setLiveSheetSyncLoading(null);
+    }
+  };
+
+  const handleLiveSyncToTeachers = async () => {
+    if (!liveSheetUrl) return;
+    setLiveSheetSyncLoading('teachers');
+    try {
+      const res = await fetch('/api/teachers/import-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetUrl: liveSheetUrl })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAlert({ type: 'success', message: `⚡ ซิงก์ข้อมูลครู/อาจารย์สำเร็จ! ${data.message}` });
+        loadAllData();
+      } else {
+        setAlert({ type: 'error', message: data.message });
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: 'เกิดข้อผิดพลาดในการซิงก์ข้อมูลอาจารย์' });
+    } finally {
+      setLiveSheetSyncLoading(null);
+    }
+  };
+
   // Form for creating teacher
   const [showAddTeacher, setShowAddTeacher] = useState(false);
   const [teacherUser, setTeacherUser] = useState('');
   const [teacherName, setTeacherName] = useState('');
   const [teacherPosition, setTeacherPosition] = useState('');
+  const [teacherBirthdate, setTeacherBirthdate] = useState('');
   const [teacherPass, setTeacherPass] = useState('');
 
   // Form for creating student
@@ -268,8 +487,10 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
           username: teacherUser,
           name: teacherName,
           position: teacherPosition || 'คุณครู',
+          birthdate: teacherBirthdate,
           password: teacherPass,
-          role: 'teacher'
+          role: 'teacher',
+          isCreatedByAdmin: true
         })
       });
       const data = await res.json();
@@ -279,6 +500,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
         setTeacherUser('');
         setTeacherName('');
         setTeacherPosition('');
+        setTeacherBirthdate('');
         setTeacherPass('');
         setShowAddTeacher(false);
         loadAllData();
@@ -524,81 +746,217 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
 
       {/* Library Stats Bento Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
-        <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-xs text-center">
+        <div className="bg-slate-900 rounded-xl p-4 border border-slate-800/80 shadow-md text-center">
           <p className="text-[10px] text-slate-400 font-bold">อาจารย์ผู้สอน</p>
-          <p className="text-lg font-black text-slate-800">{stats.totalTeachers} บัญชี</p>
+          <p className="text-lg font-black text-slate-200">{stats.totalTeachers} บัญชี</p>
         </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-xs text-center">
+        <div className="bg-slate-900 rounded-xl p-4 border border-slate-800/80 shadow-md text-center">
           <p className="text-[10px] text-slate-400 font-bold">นักเรียนสะสม</p>
-          <p className="text-lg font-black text-slate-800">{stats.totalStudents} คน</p>
+          <p className="text-lg font-black text-slate-200">{stats.totalStudents} คน</p>
         </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-xs text-center">
+        <div className="bg-slate-900 rounded-xl p-4 border border-slate-800/80 shadow-md text-center">
           <p className="text-[10px] text-slate-400 font-bold">จำนวนประเภทหนังสือ</p>
-          <p className="text-lg font-black text-indigo-600">{stats.totalBooks} รายการ</p>
+          <p className="text-lg font-black text-rose-400">{stats.totalBooks} รายการ</p>
         </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-xs text-center">
+        <div className="bg-slate-900 rounded-xl p-4 border border-slate-800/80 shadow-md text-center">
           <p className="text-[10px] text-slate-400 font-bold">นำเข้าทั้งหมด</p>
-          <p className="text-lg font-black text-emerald-600">{stats.totalReceived} เล่ม</p>
+          <p className="text-lg font-black text-emerald-400">{stats.totalReceived} เล่ม</p>
         </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-xs text-center">
+        <div className="bg-slate-900 rounded-xl p-4 border border-slate-800/80 shadow-md text-center">
           <p className="text-[10px] text-slate-400 font-bold">แจกขาดออกไป</p>
-          <p className="text-lg font-black text-blue-600">{stats.totalGivenOut} เล่ม</p>
+          <p className="text-lg font-black text-blue-400">{stats.totalGivenOut} เล่ม</p>
         </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-100 shadow-xs text-center">
+        <div className="bg-slate-900 rounded-xl p-4 border border-slate-800/80 shadow-md text-center">
           <p className="text-[10px] text-slate-400 font-bold">คงคลังปัจจุบัน</p>
-          <p className="text-lg font-black text-teal-600">{stats.totalStock} เล่ม</p>
+          <p className="text-lg font-black text-teal-400">{stats.totalStock} เล่ม</p>
         </div>
-        <div className="bg-white border border-rose-100 bg-rose-50/10 rounded-xl p-4 shadow-xs text-center">
-          <p className="text-[10px] text-rose-500 font-bold">รออนุมัติยืม</p>
-          <p className="text-lg font-black text-rose-600">{stats.pendingBorrows} รายการ</p>
+        <div className="bg-slate-900 border border-rose-950 bg-rose-950/20 rounded-xl p-4 shadow-md text-center animate-pulse">
+          <p className="text-[10px] text-rose-400 font-bold">รออนุมัติยืม</p>
+          <p className="text-lg font-black text-rose-300">{stats.pendingBorrows} รายการ</p>
         </div>
-        <div className="bg-white border border-amber-100 bg-amber-50/10 rounded-xl p-4 shadow-xs text-center">
-          <p className="text-[10px] text-amber-500 font-bold">กำลังถูกยืมไป</p>
-          <p className="text-lg font-black text-amber-600">{stats.activeBorrows} เล่ม</p>
+        <div className="bg-slate-900 border border-amber-950 bg-amber-950/20 rounded-xl p-4 shadow-md text-center">
+          <p className="text-[10px] text-amber-400 font-bold">กำลังถูกยืมไป</p>
+          <p className="text-lg font-black text-amber-300">{stats.activeBorrows} เล่ม</p>
         </div>
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex border-b border-slate-200 gap-2 overflow-x-auto">
+      <div className="flex border-b border-slate-200 gap-4 mb-6 relative">
+        
+        {/* Dropdown 1: 👥 สมาชิกในระบบ */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowUserDropdown(!showUserDropdown);
+              setShowBookDropdown(false);
+            }}
+            className={`pb-3 px-1 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap flex items-center gap-1 sm:gap-1.5 ${
+              activeTab === 'teachers' || activeTab === 'students'
+                ? 'border-rose-600 text-rose-600 font-black'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <span>👥 สมาชิกในระบบ</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showUserDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {showUserDropdown && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowUserDropdown(false)}></div>
+              <div className="absolute left-0 mt-1 w-56 sm:w-64 rounded-xl shadow-lg bg-white border border-slate-200 ring-1 ring-black/5 focus:outline-none z-40 animate-fadeIn divide-y divide-slate-100 overflow-hidden">
+                <div className="py-1.5">
+                  <button
+                    onClick={() => {
+                      setActiveTab('teachers');
+                      setShowUserDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'teachers' ? 'bg-rose-50 text-rose-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">🎓 รายชื่อคุณครูผู้จัดการ</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold">
+                      {teachers.length} คน
+                    </span>
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setActiveTab('students');
+                      setShowUserDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'students' ? 'bg-rose-50 text-rose-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">👥 รายชื่อนักเรียนแผนกต่าง ๆ</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold">
+                      {students.length} คน
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Dropdown 2: 📚 จัดการคลังและวิเคราะห์ */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowBookDropdown(!showBookDropdown);
+              setShowUserDropdown(false);
+            }}
+            className={`pb-3 px-1 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap flex items-center gap-1 sm:gap-1.5 ${
+              ['books', 'approvals', 'distribution', 'analytics'].includes(activeTab)
+                ? 'border-rose-600 text-rose-600 font-black'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <span>📚 ระบบจัดสรรและคลังความรู้</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showBookDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {showBookDropdown && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowBookDropdown(false)}></div>
+              <div className="absolute left-0 mt-1 w-64 sm:w-72 rounded-xl shadow-lg bg-white border border-slate-200 ring-1 ring-black/5 focus:outline-none z-40 animate-fadeIn divide-y divide-slate-100 overflow-hidden">
+                <div className="py-1.5">
+                  <button
+                    onClick={() => {
+                      setActiveTab('books');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'books' ? 'bg-rose-50 text-rose-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">📖 ทะเบียนพิกัดหนังสือ</span>
+                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-bold">
+                      {books.length} เล่ม
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('approvals');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'approvals' ? 'bg-rose-50 text-rose-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">🔔 อนุมัติยืมและรับคืนหนังสือ</span>
+                    {stats.pendingBorrows > 0 && (
+                      <span className="text-[9px] font-black bg-rose-500 text-white px-2 py-0.5 rounded-full leading-none animate-pulse">
+                        {stats.pendingBorrows}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('distribution');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'distribution' ? 'bg-rose-50 text-rose-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">🎁 ระบบแจกหนังสือเรียน</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('analytics');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'analytics' ? 'bg-rose-50 text-rose-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">📊 รายงานและวิเคราะห์ข้อมูล</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab('sheets');
+                      setShowBookDropdown(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs sm:text-sm transition-all flex items-center justify-between gap-2 ${
+                      activeTab === 'sheets' ? 'bg-rose-50 text-rose-700 font-extrabold' : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5 text-emerald-700 font-extrabold">🌐 ตรวจสอบ Google Sheets Real-time</span>
+                    <span className="text-[9px] bg-emerald-500 text-white px-1.5 py-0.5 rounded-full font-black animate-pulse">
+                      LIVE
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Tab 3: 📊 Google Sheets Real-time Monitor */}
         <button
-          onClick={() => setActiveTab('teachers')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === 'teachers' 
-              ? 'border-rose-600 text-rose-600' 
+          id="btn-admin-tab-sheets"
+          onClick={() => {
+            setActiveTab('sheets');
+            setShowUserDropdown(false);
+            setShowBookDropdown(false);
+          }}
+          className={`pb-3 px-1 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === 'sheets'
+              ? 'border-rose-600 text-rose-600 font-black'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
-          🎓 รายชื่อคุณครูผู้จัดการ ({teachers.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('students')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === 'students' 
-              ? 'border-rose-600 text-rose-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          👥 รายชื่อนักเรียนแผนกต่าง ๆ ({students.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('books')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === 'books' 
-              ? 'border-rose-600 text-rose-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          📖 ทะเบียนพิกัดหนังสือ ({books.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('approvals')}
-          className={`pb-3 px-4 text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer whitespace-nowrap ${
-            activeTab === 'approvals' 
-              ? 'border-rose-600 text-rose-600' 
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          🔔 อนุมัติยืมและรับคืนหนังสือ ({stats.pendingBorrows})
+          <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+          <span>📊 ดูข้อมูล Google Sheet สด</span>
+          <span className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-1.5 py-0.5 rounded font-black uppercase">
+            LIVE
+          </span>
         </button>
       </div>
 
@@ -621,8 +979,8 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
       {/* Main content grid splitter */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left Side Content Area (9/12) */}
-        <div className="lg:col-span-8 space-y-6">
+        {/* Left Side Content Area */}
+        <div className={`${activeTab === 'sheets' ? 'lg:col-span-12' : 'lg:col-span-8'} space-y-6`}>
           
           {/* Sub-Tab 1: Teachers list */}
           {activeTab === 'teachers' && (
@@ -667,8 +1025,8 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                     <p><strong>คำแนะนำในการจัดเตรียมคอลัมน์ใน Google Sheets รายชื่อครู/อาจารย์:</strong></p>
                     <ul className="list-disc list-inside space-y-0.5 text-[11px] text-emerald-800/80">
                       <li>ควรจัดเตรียมคอลัมน์ชื่อ <strong>"ชื่อ-นามสกุล"</strong> และ <strong>"ตำแหน่ง"</strong> ใน Google Sheet</li>
-                      <li>หากไม่มีคอลัมน์ <strong>"ชื่อผู้ใช้งาน"</strong> (Username) ระบบจะสร้างชื่อผู้ใช้งานสำหรับเข้าสู่ระบบให้อัตโนมัติจากชื่อ-นามสกุล</li>
-                      <li>สามารถระบุคอลัมน์ <strong>"รหัสผ่าน"</strong> (Password) ได้ หากไม่มีรหัสผ่านเริ่มต้นจะเป็นชื่อผู้ใช้งาน</li>
+                      <li>แนะนำให้เพิ่มคอลัมน์ <strong>"วันเดือนปีเกิด"</strong> (หรือ วันเกิด / Birthdate / Birthday) รูปแบบ <strong>20/10/2540</strong> เพื่อนำมาใช้เป็นรหัสผ่านเริ่มต้นโดยตรง</li>
+                      <li>หากไม่มีคอลัมน์ <strong>"ชื่อผู้ใช้งาน"</strong> (Username) ระบบจะสร้างชื่อผู้ใช้งานจากชื่อ-นามสกุลอังกฤษ (หรือภาษาไทยโดยการเชื่อมคำ) ให้อัตโนมัติ</li>
                       <li>ตั้งค่าสิทธิ์แชร์ชีตให้เป็น <strong>"ทุกคนที่มีลิงก์มีสิทธิ์เข้าถึง (Anyone with the link can view)"</strong></li>
                     </ul>
                   </div>
@@ -698,14 +1056,14 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
               {showAddTeacher && (
                 <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3.5 animate-fadeIn">
                   <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-rose-500" /> กรอกข้อมูลคุณครูใหม่</h4>
-                  <form onSubmit={handleAddTeacherSubmit} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                  <form onSubmit={handleAddTeacherSubmit} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-500 mb-1">Username (ใช้เข้าสู่ระบบ)</label>
+                      <label className="block text-[10px] font-bold text-slate-500 mb-1">Username (ภาษาอังกฤษใช้เข้าสู่ระบบ)</label>
                       <input
                         id="form-teacher-username"
                         type="text"
                         required
-                        placeholder="เช่น teacher_somsak"
+                        placeholder="เช่น somsaki"
                         value={teacherUser}
                         onChange={(e) => setTeacherUser(e.target.value)}
                         className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
@@ -728,25 +1086,36 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                       <input
                         id="form-teacher-position"
                         type="text"
-                        placeholder="เช่น หัวหน้าแผนกวิชา, ครูผู้รับผิดชอบ"
+                        placeholder="เช่น หัวหน้าแผนกวิชา"
                         value={teacherPosition}
                         onChange={(e) => setTeacherPosition(e.target.value)}
                         className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-500 mb-1">กำหนดรหัสผ่าน (Password)</label>
+                      <label className="block text-[10px] font-bold text-slate-500 mb-1">วันเดือนปีเกิด (รหัสผ่านเริ่มต้น)</label>
+                      <input
+                        id="form-teacher-birthdate"
+                        type="text"
+                        placeholder="เช่น 20/10/2540"
+                        value={teacherBirthdate}
+                        onChange={(e) => setTeacherBirthdate(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 mb-1">รหัสผ่าน (Password)</label>
                       <input
                         id="form-teacher-pass"
                         type="password"
                         required
-                        placeholder="รหัสผ่านเริ่มต้น"
+                        placeholder="กำหนดรหัสผ่าน"
                         value={teacherPass}
                         onChange={(e) => setTeacherPass(e.target.value)}
                         className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
                       />
                     </div>
-                    <div className="sm:col-span-4 flex justify-end gap-2 mt-1">
+                    <div className="sm:col-span-5 flex justify-end gap-2 mt-1">
                       <button type="button" onClick={() => setShowAddTeacher(false)} className="px-3 py-1.5 text-slate-500 hover:bg-slate-100 text-xs rounded-lg cursor-pointer">ยกเลิก</button>
                       <button type="submit" disabled={actionLoading === 'add_teacher'} className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg cursor-pointer">
                         {actionLoading === 'add_teacher' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'ลงทะเบียนคุณครู'}
@@ -764,6 +1133,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                       <th className="p-3">Username</th>
                       <th className="p-3">ชื่อจริง-นามสกุล</th>
                       <th className="p-3">ตำแหน่ง</th>
+                      <th className="p-3">วันเดือนปีเกิด (รหัสผ่านเริ่มต้น)</th>
                       <th className="p-3">สิทธิ์ใช้งาน</th>
                       <th className="p-3 text-right">ดำเนินการ</th>
                     </tr>
@@ -774,6 +1144,7 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                         <td className="p-3 font-mono font-bold text-slate-600">{t.username}</td>
                         <td className="p-3 font-bold text-slate-800">{t.name}</td>
                         <td className="p-3 text-slate-500 font-medium">{t.position || 'คุณครู'}</td>
+                        <td className="p-3 text-rose-600 font-semibold">{t.birthdate || t.password || '-'}</td>
                         <td className="p-3">
                           <span className="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-100 rounded text-[10px] font-bold">
                             คุณครูเช็คพัสดุ
@@ -839,8 +1210,8 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                   <div className="text-xs text-emerald-800 space-y-1">
                     <p><strong>คำแนะนำในการจัดเตรียมคอลัมน์ใน Google Sheets รายชื่อนักเรียน:</strong></p>
                     <ul className="list-disc list-inside space-y-0.5 text-[11px] text-emerald-800/80">
-                      <li>ต้องมีคอลัมน์หลักอย่างน้อยสองตัวคือ <strong>"รหัสนักเรียน"</strong> (หรือ รหัสประจำตัว/รหัสนักศึกษา) และ <strong>"ชื่อ-นามสกุล"</strong></li>
-                      <li>สามารถเพิ่มคอลัมน์ <strong>"ห้องเรียน"</strong> หรือ <strong>"สาขา"</strong> (Department) เพื่อเก็บข้อมูลระดับชั้นเรียนของนักเรียนได้</li>
+                      <li>ต้องมีคอลัมน์หลักอย่างน้อยสองตัวคือ <strong>"รหัสนักเรียน"</strong> (หรือ รหัสประจำตัว) และ <strong>"ชื่อ-นามสกุล"</strong></li>
+                      <li>ระบบรองรับทั้งคอลัมน์ระดับชั้นเดี่ยวๆ เช่น <strong>"ห้องเรียน"</strong> หรือสามารถแยกเป็น 3 คอลัมน์ได้แก่ <strong>"ระดับชั้น"</strong> (เช่น ม.4, ปวช.1), <strong>"ห้อง"</strong> (เช่น 1, 2) และ <strong>"แผนกวิชา"</strong> หรือ <strong>"สาขา"</strong> โดยระบบจะผสานข้อมูลให้อัตโนมัติ</li>
                       <li>ตั้งค่าสิทธิ์แชร์ชีตให้เป็น <strong>"ทุกคนที่มีลิงก์มีสิทธิ์เข้าถึง (Anyone with the link can view)"</strong></li>
                     </ul>
                   </div>
@@ -1027,13 +1398,20 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
                             </div>
                           </td>
                           <td className="p-3 text-center">
-                            {s.isRegistered ? (
-                              <span className="px-3 py-1 bg-emerald-500 text-white rounded-full font-bold text-[10px] shadow-xs inline-flex items-center gap-1 justify-center min-w-[110px]">
-                                🟢 ใช้งานอยู่ (Active)
-                              </span>
+                            {s.isRegistered || s.isLoggedIn ? (
+                              <div className="flex flex-col items-center gap-0.5">
+                                <span className="px-3 py-1 bg-emerald-500 text-white rounded-full font-bold text-[10px] shadow-xs inline-flex items-center gap-1 justify-center min-w-[110px]">
+                                  🟢 ลงชื่อเข้าใช้งานแล้ว
+                                </span>
+                                {s.lastLogin && (
+                                  <span className="text-[9px] text-slate-400 font-mono">
+                                    {new Date(s.lastLogin).toLocaleDateString('th-TH')} {new Date(s.lastLogin).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
+                                  </span>
+                                )}
+                              </div>
                             ) : (
                               <span className="px-3 py-1 bg-rose-500 text-white rounded-full font-bold text-[10px] shadow-xs inline-flex items-center gap-1 justify-center min-w-[110px]">
-                                🔴 ยังไม่เข้าระบบ
+                                🔴 ยังไม่ลงชื่อเข้าใช้
                               </span>
                             )}
                           </td>
@@ -1457,12 +1835,404 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
             </div>
           )}
 
+          {activeTab === 'distribution' && (
+            <TextbookDistribution 
+              books={books} 
+              students={students} 
+              currentUser={{ name: adminUser.name, id: adminUser.username, role: 'admin' }} 
+              onRefreshData={loadAllData} 
+            />
+          )}
+
+          {activeTab === 'analytics' && (
+            <AnalyticsReport 
+              books={books} 
+              transactions={transactions} 
+              students={students} 
+            />
+          )}
+
+          {/* Sub-Tab 7: Real-Time Google Sheets Viewer */}
+          {activeTab === 'sheets' && (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6 text-slate-100 animate-fadeIn">
+              {/* Header & Status */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-emerald-400 shadow-inner">
+                    <FileSpreadsheet className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-extrabold text-white text-lg sm:text-xl font-display">
+                        Google Sheets Real-time Viewer & Live Sync
+                      </h3>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                        LIVE REALTIME
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      ดึงข้อมูลสดจาก Google Sheets แบบเรียลไทม์ พร้อมระบบตรวจสอบโครงสร้าง ตรวจสอบแถว และซิงก์เข้าฐานข้อมูลได้ทันที
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-start md:self-auto">
+                  {/* Auto Refresh Toggle */}
+                  <button
+                    id="btn-admin-sheets-autorefresh-toggle"
+                    onClick={() => setLiveSheetAutoRefresh(!liveSheetAutoRefresh)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border flex items-center gap-1.5 cursor-pointer ${
+                      liveSheetAutoRefresh
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-950/20'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    {liveSheetAutoRefresh ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
+                        <span>ซิงก์อัตโนมัติอยู่ (12 วินาที)</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+                        <span>เปิดซิงก์อัตโนมัติ</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Manual Refresh Button */}
+                  <button
+                    id="btn-admin-sheets-manual-refresh"
+                    onClick={() => fetchLiveSheetData()}
+                    disabled={liveSheetLoading}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${liveSheetLoading ? 'animate-spin' : ''}`} />
+                    <span>{liveSheetLoading ? 'กำลังโหลดสด...' : 'รีเฟรชข้อมูลสด'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Preset Selector & Custom Input Form */}
+              <div className="bg-slate-950/70 border border-slate-800 p-4.5 rounded-2xl space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <label className="text-xs font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Database className="w-4 h-4 text-emerald-400" />
+                    เลือกแหล่งข้อมูล Google Sheets หรือระบุลิงก์:
+                  </label>
+
+                  {/* Quick presets */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      id="btn-admin-sheets-preset-books"
+                      onClick={() => {
+                        setLivePresetType('books');
+                        const url = sheetUrl || 'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+                        setLiveSheetUrl(url);
+                        fetchLiveSheetData(url);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                        livePresetType === 'books'
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800'
+                      }`}
+                    >
+                      📖 ชีตพิกัดหนังสือ
+                    </button>
+
+                    <button
+                      type="button"
+                      id="btn-admin-sheets-preset-students"
+                      onClick={() => {
+                        setLivePresetType('students');
+                        const url = studentSheetUrl || 'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+                        setLiveSheetUrl(url);
+                        fetchLiveSheetData(url);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                        livePresetType === 'students'
+                          ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800'
+                      }`}
+                    >
+                      👥 ชีตรายชื่อนักเรียน
+                    </button>
+
+                    <button
+                      type="button"
+                      id="btn-admin-sheets-preset-teachers"
+                      onClick={() => {
+                        setLivePresetType('teachers');
+                        const url = teacherSheetUrl || 'https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+                        setLiveSheetUrl(url);
+                        fetchLiveSheetData(url);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                        livePresetType === 'teachers'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800'
+                      }`}
+                    >
+                      🎓 ชีตรายชื่ออาจารย์
+                    </button>
+                  </div>
+                </div>
+
+                {/* URL Input Row */}
+                <form onSubmit={(e) => { e.preventDefault(); fetchLiveSheetData(); }} className="flex flex-col sm:flex-row gap-2.5">
+                  <div className="relative flex-1">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-500 absolute left-3.5 top-3" />
+                    <input
+                      id="input-admin-live-sheet-url"
+                      type="text"
+                      required
+                      placeholder="https://docs.google.com/spreadsheets/d/YOUR_SPREADSHEET_ID/edit..."
+                      value={liveSheetUrl}
+                      onChange={(e) => setLiveSheetUrl(e.target.value)}
+                      className="w-full pl-10 pr-3 py-2.5 bg-slate-900 border border-slate-750 focus:border-rose-500 focus:outline-none rounded-xl text-xs text-white placeholder-slate-500 font-mono"
+                    />
+                  </div>
+
+                  <div className="w-full sm:w-32">
+                    <input
+                      id="input-admin-live-sheet-gid"
+                      type="text"
+                      placeholder="GID (เช่น 0)"
+                      value={liveSheetGid}
+                      onChange={(e) => setLiveSheetGid(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-900 border border-slate-750 focus:border-rose-500 focus:outline-none rounded-xl text-xs text-white placeholder-slate-500 font-mono"
+                    />
+                  </div>
+
+                  <button
+                    id="btn-admin-live-sheet-submit"
+                    type="submit"
+                    disabled={liveSheetLoading}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl cursor-pointer transition-all shrink-0 flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    {liveSheetLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                    ดึงข้อมูลสด
+                  </button>
+                </form>
+              </div>
+
+              {/* Live Status Stats & View Switcher */}
+              {liveSheetData ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-center">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">สถานะการเชื่อมต่อ</p>
+                      <p className="text-xs sm:text-sm font-black text-emerald-400 flex items-center justify-center gap-1 mt-0.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
+                        เชื่อมต่อสดสำเร็จ
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-center">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">เวลาดึงข้อมูลล่าสุด</p>
+                      <p className="text-xs sm:text-sm font-black text-slate-200 mt-0.5 font-mono">
+                        {new Date(liveSheetData.fetchedAt).toLocaleTimeString('th-TH')} น.
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-center">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">จำนวนแถวทั้งหมด</p>
+                      <p className="text-xs sm:text-sm font-black text-rose-400 mt-0.5 font-mono">
+                        {liveSheetData.totalRows} แถว
+                      </p>
+                    </div>
+
+                    <div className="bg-slate-950 border border-slate-800 p-3.5 rounded-xl text-center">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">คอลัมน์ที่ตรวจพบ</p>
+                      <p className="text-xs sm:text-sm font-black text-sky-400 mt-0.5 font-mono">
+                        {liveSheetData.headers.length} คอลัมน์
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* View Mode & Quick Sync Bar */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-950/80 p-3 border border-slate-800 rounded-xl">
+                    {/* View mode toggle */}
+                    <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800 w-full sm:w-auto">
+                      <button
+                        id="btn-admin-sheets-mode-table"
+                        onClick={() => setLiveSheetMode('table')}
+                        className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          liveSheetMode === 'table' ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Database className="w-3.5 h-3.5" />
+                        ตารางข้อมูลสด ({liveSheetData.rows.length})
+                      </button>
+
+                      <button
+                        id="btn-admin-sheets-mode-embed"
+                        onClick={() => setLiveSheetMode('embed')}
+                        className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          liveSheetMode === 'embed' ? 'bg-rose-600 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        ฝังหน้าจอ Google Sheet สด
+                      </button>
+                    </div>
+
+                    {/* Quick sync buttons */}
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                      <span className="text-[11px] text-slate-400 font-semibold hidden md:inline">นำเข้าเข้าสู่ระบบทันที:</span>
+                      
+                      <button
+                        id="btn-admin-sheets-sync-books"
+                        onClick={handleLiveSyncToBooks}
+                        disabled={liveSheetSyncLoading !== null}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="นำเข้าชีตนี้เข้าสู่ทะเบียนหนังสือ"
+                      >
+                        {liveSheetSyncLoading === 'books' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        ซิงก์เข้าหนังสือ
+                      </button>
+
+                      <button
+                        id="btn-admin-sheets-sync-students"
+                        onClick={handleLiveSyncToStudents}
+                        disabled={liveSheetSyncLoading !== null}
+                        className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="นำเข้าชีตนี้เข้าสู่ทะเบียนนักเรียน"
+                      >
+                        {liveSheetSyncLoading === 'students' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Users className="w-3.5 h-3.5" />}
+                        ซิงก์เข้านักเรียน
+                      </button>
+
+                      <button
+                        id="btn-admin-sheets-sync-teachers"
+                        onClick={handleLiveSyncToTeachers}
+                        disabled={liveSheetSyncLoading !== null}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="นำเข้าชีตนี้เข้าสู่ทะเบียนอาจารย์"
+                      >
+                        {liveSheetSyncLoading === 'teachers' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <School className="w-3.5 h-3.5" />}
+                        ซิงก์เข้าอาจารย์
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Content Mode 1: Table Grid View */}
+                  {liveSheetMode === 'table' && (
+                    <div className="space-y-3">
+                      {/* Table Search Filter Bar */}
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="relative w-full sm:w-80">
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                          <input
+                            id="input-admin-live-sheet-search"
+                            type="text"
+                            placeholder="ค้นหาข้อความในแถวข้อมูลเรียลไทม์..."
+                            value={liveSheetFilter}
+                            onChange={(e) => setLiveSheetFilter(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="text-xs text-slate-400 font-mono self-end sm:self-auto">
+                          แสดงผล {liveSheetData.rows.filter(r => r.some(cell => cell.toLowerCase().includes(liveSheetFilter.toLowerCase()))).length} / {liveSheetData.totalRows} แถว
+                        </div>
+                      </div>
+
+                      {/* Table Scrollable Container */}
+                      <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-[500px] shadow-inner bg-slate-950">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="sticky top-0 bg-slate-900 border-b border-slate-800 text-slate-300 font-bold z-10">
+                            <tr>
+                              <th className="py-2.5 px-3 border-r border-slate-800 text-center w-12 text-slate-500">#</th>
+                              {liveSheetData.headers.map((h, idx) => (
+                                <th key={idx} className="py-2.5 px-3 border-r border-slate-800 whitespace-nowrap font-mono text-emerald-400">
+                                  {h || `Col ${idx + 1}`}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
+                            {liveSheetData.rows
+                              .filter(r => !liveSheetFilter || r.some(cell => cell.toLowerCase().includes(liveSheetFilter.toLowerCase())))
+                              .map((row, rowIdx) => (
+                                <tr key={rowIdx} className="hover:bg-slate-900/70 transition-colors">
+                                  <td className="py-2 px-3 border-r border-slate-800/60 text-center text-slate-500 font-bold text-[11px]">
+                                    {rowIdx + 1}
+                                  </td>
+                                  {liveSheetData.headers.map((_, colIdx) => (
+                                    <td key={colIdx} className="py-2 px-3 border-r border-slate-800/60 whitespace-nowrap text-xs max-w-xs truncate" title={row[colIdx] || ''}>
+                                      {row[colIdx] ? (
+                                        <span className="text-slate-200">{row[colIdx]}</span>
+                                      ) : (
+                                        <span className="text-slate-600 italic font-sans text-[10px]">- ไม่ระบุ -</span>
+                                      )}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Content Mode 2: Live Embedded Iframe View */}
+                  {liveSheetMode === 'embed' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                        <span className="flex items-center gap-1.5 font-mono">
+                          <ExternalLink className="w-4 h-4 text-emerald-400" />
+                          ลิงก์ Google Sheet ID: {liveSheetData.spreadsheetId}
+                        </span>
+
+                        <a
+                          href={liveSheetUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1 underline underline-offset-2"
+                        >
+                          เปิดในแท็บใหม่ Google Sheets ↗
+                        </a>
+                      </div>
+
+                      <div className="w-full h-[550px] rounded-xl overflow-hidden border border-slate-800 bg-white shadow-2xl relative">
+                        <iframe
+                          src={liveSheetData.embedUrl}
+                          className="w-full h-full border-0"
+                          title="Live Google Sheet View"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="py-16 text-center text-slate-500 bg-slate-950 border border-slate-800 rounded-2xl">
+                  {liveSheetLoading ? (
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Loader2 className="w-8 h-8 text-rose-500 animate-spin" />
+                      <p className="font-bold text-slate-300 text-sm">กำลังเชื่อมต่อและดึงข้อมูลสดจาก Google Sheet...</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <FileSpreadsheet className="w-10 h-10 text-slate-600" />
+                      <p className="font-bold text-slate-300 text-sm">ยังไม่ได้โหลดข้อมูล Google Sheet</p>
+                      <p className="text-xs text-slate-500">กรุณากดปุ่ม "ดึงข้อมูลสด" หรือเลือกชีตพรีเซ็ตด้านบน</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
 
         {/* Right Side Settings Area (4/12) */}
-        <div className="lg:col-span-4 space-y-6">
-          
-          {/* Danger Zone Reset Module */}
+        {activeTab !== 'sheets' && (
+          <div className="lg:col-span-4 space-y-6">
+            
+            {/* Danger Zone Reset Module */}
           <div className="bg-white rounded-2xl border border-red-150 p-6 shadow-sm space-y-4">
             <h3 className="font-extrabold text-red-800 text-base flex items-center gap-2">
               <ShieldAlert className="w-5 h-5 text-red-600" />
@@ -1532,11 +2302,10 @@ export default function AdminPanel({ adminUser, onLogout }: AdminPanelProps) {
               <li>การล้างข้อมูลโรงงานจะไม่ลบบัญชีแอดมินตัวนี้</li>
             </ul>
           </div>
-
         </div>
+      )}
 
       </div>
-
     </div>
   );
 }
